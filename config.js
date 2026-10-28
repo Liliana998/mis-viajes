@@ -1,0 +1,14 @@
+// Mis Viajes - configuracion publica de la aplicacion.
+// Estos datos NO son secretos: sin la identidad de Google de la propietaria,
+// la llave del dispositivo y el PIN, el servicio no entrega ningun dato.
+window.CONFIG_MV = {
+  // Direccion del servicio de Apps Script (termina en /exec).
+  // Se completa en el despliegue privado (requiere autorizacion).
+  API_URL: '',
+  // Mismo ID de cliente que las demas aplicaciones (origen liliana998.github.io).
+  ID_CLIENTE: '575889810613-87gle57sd5l8rp6je69cc66slnkp5ch6.apps.googleusercontent.com',
+  // Minutos en segundo plano tras los cuales se vuelve a pedir el PIN.
+  MINUTOS_BLOQUEO: 5,
+  // Minutos sin tocar la aplicacion (abierta) tras los cuales se bloquea.
+  MINUTOS_INACTIVIDAD: 10
+};
