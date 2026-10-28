@@ -1,0 +1,23 @@
+{
+  "name": "Mis viajes",
+  "short_name": "Mis viajes",
+  "description": "Documentos de viaje, itinerarios y lugares por conocer.",
+  "lang": "es-MX",
+  "id": "/mis-viajes/",
+  "start_url": "/mis-viajes/",
+  "scope": "/mis-viajes/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#F8EBDD",
+  "theme_color": "#713E35",
+  "icons": [
+    { "src": "icono-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icono-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icono-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "share_target": {
+    "action": "./",
+    "method": "GET",
+    "params": { "title": "titulo", "text": "texto", "url": "enlace" }
+  }
+}
