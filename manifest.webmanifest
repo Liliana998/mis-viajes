@@ -3,7 +3,7 @@
   "short_name": "Mis viajes",
   "description": "Documentos de viaje, itinerarios y lugares por conocer.",
   "lang": "es-MX",
-  "id": "./",
+  "id": "/mis-viajes/",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
