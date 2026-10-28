@@ -672,6 +672,12 @@
           desde: f.querySelector('[name=d_desde]').value, hasta: f.querySelector('[name=d_hasta]').value };
       }).filter(function (d) { return d.ciudad; });
       x.destino = x.destinos.map(function (d) { return d.ciudad; }).join(', ');
+      // Sin Salida/Regreso: se toman de las fechas de los destinos.
+      var fechasD = [];
+      x.destinos.forEach(function (d) { if (d.desde) fechasD.push(d.desde); if (d.hasta) fechasD.push(d.hasta); });
+      fechasD.sort();
+      if (!x.inicio && fechasD.length) x.inicio = fechasD[0];
+      if (!x.fin && fechasD.length && fechasD[fechasD.length - 1] > x.inicio) x.fin = fechasD[fechasD.length - 1];
       if (!x.titulo) { error.textContent = 'Escriba un nombre para el viaje.'; return; }
       if (x.inicio && x.fin && x.fin < x.inicio) { error.textContent = 'La fecha de regreso es anterior a la de salida.'; return; }
       if (x.destinos.some(function (d) { return d.desde && d.hasta && d.hasta < d.desde; })) { error.textContent = 'Revise las fechas de los destinos.'; return; }
