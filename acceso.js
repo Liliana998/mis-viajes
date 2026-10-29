@@ -143,6 +143,8 @@
     recuperado: 'Cambio recuperado de una copia anterior de este dispositivo.',
     yaIncorporado: 'Este documento ya se incorporó a un viaje.',
     muyGrande: 'El archivo es demasiado grande para guardarlo sin conexión (máximo 6 MB). Ábralo en Drive.',
+    importe: 'Revise el importe: escriba una cantidad mayor que cero (por ejemplo 1250.50).',
+    enUso: 'Esa fotografía pertenece a un gasto guardado.',
     interno: 'Error del servicio.'
   };
 

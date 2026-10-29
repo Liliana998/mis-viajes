@@ -31,9 +31,15 @@ var Datos = (function () {
   var ultimoGuardadoLocal = true;
 
   function vacio() {
-    return { viajes: [], elementos: [], lugares: [], asignaciones: [], documentos: [], carpeta: '', hoja: '', generado: '' };
+    return { viajes: [], elementos: [], lugares: [], asignaciones: [], gastos: [], documentos: [], carpeta: '', hoja: '', generado: '' };
   }
-  var NOMBRE_TABLA = { Viajes: 'viajes', Elementos: 'elementos', Lugares: 'lugares', Asignaciones: 'asignaciones' };
+  var NOMBRE_TABLA = { Viajes: 'viajes', Elementos: 'elementos', Lugares: 'lugares', Asignaciones: 'asignaciones', Gastos: 'gastos' };
+  // Copias guardadas por versiones anteriores pueden no tener todas las listas.
+  function completar(x) {
+    var base = vacio();
+    Object.keys(base).forEach(function (k) { if (Array.isArray(base[k]) && !Array.isArray(x[k])) x[k] = []; });
+    return x;
+  }
 
   function configurar(o) { api = o.api; enLinea = o.enLinea || enLinea; }
   function alCambiar(fn) { oyentes.push(fn); }
@@ -56,7 +62,7 @@ var Datos = (function () {
 
   function cargarLocal() {
     return Promise.all([Almacen.leer('datos'), Almacen.leer('pendientes'), Almacen.leer('problemas')]).then(function (r) {
-      if (r[0]) D = r[0];
+      if (r[0]) D = completar(r[0]);
       pendientes = Array.isArray(r[1]) ? r[1] : [];
       pendientes.forEach(function (o) { delete o.enviada; }); // envio interrumpido: se repite (es seguro)
       problemas = Array.isArray(r[2]) ? r[2] : [];
@@ -77,6 +83,7 @@ var Datos = (function () {
       if (o.tabla === 'Viajes') {
         D.elementos = D.elementos.filter(function (x) { return x.viaje_id !== o.id; });
         D.asignaciones = D.asignaciones.filter(function (x) { return x.viaje_id !== o.id; });
+        D.gastos = D.gastos.filter(function (x) { return x.viaje_id !== o.id; });
       }
       if (o.tabla === 'Lugares') D.asignaciones = D.asignaciones.filter(function (x) { return x.lugar_id !== o.id; });
       return;
@@ -161,7 +168,7 @@ var Datos = (function () {
       }
       var datos = lote.length ? r.datos.datos : r.datos;
       if (lote.length) procesarResultados(lote, r.datos.resultados || []);
-      D = datos;
+      D = completar(datos);
       aplicarPendientes();
       return persistir().then(function () { avisar(); return true; });
     }, function () {

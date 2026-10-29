@@ -1,19 +1,22 @@
 /**
- * Mis Viajes - vistas.js v2 («Boutique de viajes moderna»)
+ * Mis Viajes - vistas.js v2.2 («Boutique de viajes moderna»)
  * Pantallas de la aplicacion. Todo el texto se inserta como texto (nunca
  * como HTML) para que ningun dato pueda ejecutar codigo.
  *
- * Navegacion: Inicio («Mi día de hoy» durante el viaje), Viajes («Mis
- * viajes»), Lugares («Mis lugares favoritos» y «Mi galería de viajes») y
- * Archivos («Documentos y reservas»).
+ * Navegacion inferior: Inicio («Mi día de hoy» durante el viaje), Viajes
+ * («Mis viajes»), Lugares («Mis lugares favoritos» y «Mi galería de viajes»)
+ * y Documentos (lo que llega a la carpeta de Drive, para revisar).
+ * Cada viaje abre con accesos grandes, sin pestañas: Itinerario (un día a la
+ * vez), Documentos y reservas (cada reserva una sola vez, con los documentos
+ * de cada viajero), Lugares por conocer, Gastos de mi viaje, Emergencias y
+ * Recordatorios.
  */
 (function () {
   'use strict';
 
   var MV = window.MV = window.MV || {};
   var ruta = { p: 'inicio', a: {} };
-  var pestanaViaje = {};
-  var filtrosLugares = { q: '', categoria: '', estado: '' };
+  var filtrosLugares = { q: '', ciudad: '', categoria: '', estado: '' };
 
   var TIPOS = {
     vuelo: 'Vuelo', hotel: 'Alojamiento', seguro: 'Seguro de viaje', traslado: 'Traslado', auto: 'Renta de auto',
@@ -27,7 +30,7 @@
   var MESES_LARGOS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
   var DIAS = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
   var DIAS_LARGOS = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-  var FORMULARIOS = ['viajeForm', 'elementoForm', 'lugarForm', 'revision', 'asignacionForm'];
+  var FORMULARIOS = ['viajeForm', 'elementoForm', 'lugarForm', 'revision', 'asignacionForm', 'gastoForm'];
 
   /* ====================== UTILIDADES ====================== */
 
@@ -195,13 +198,13 @@
 
   var urlsFotos = {};
   // Coloca la foto en un <img>: memoria, copia cifrada del dispositivo o servicio.
-  function ponerFoto(img, fotoId) {
+  function ponerFoto(img, fotoId, accion) {
     if (!fotoId) return img;
     if (urlsFotos[fotoId]) { img.src = urlsFotos[fotoId]; return img; }
     Almacen.leerFoto(fotoId).then(function (f) {
       if (f) return f;
       if (!MV.hayConexion()) return null;
-      return MV.api('foto', { id: fotoId }).then(function (r) {
+      return MV.api(accion || 'foto', { id: fotoId }).then(function (r) {
         if (!r.ok) return null;
         var bin = atob(r.datos.base64), b = new Uint8Array(bin.length);
         for (var i = 0; i < bin.length; i++) b[i] = bin.charCodeAt(i);
@@ -243,8 +246,9 @@
 
   /* ====================== NAVEGACION ====================== */
 
-  var SECCION = { inicio: 'inicio', dia: 'inicio', viajes: 'viajes', viaje: 'viajes', viajeForm: 'viajes', elemento: 'viajes',
-    elementoForm: 'viajes', asignacionForm: 'viajes', lugares: 'lugares', lugarForm: 'lugares', galeria: 'lugares',
+  var SECCION = { inicio: 'inicio', dia: 'viajes', viajes: 'viajes', viaje: 'viajes', viajeForm: 'viajes', elemento: 'viajes',
+    elementoForm: 'viajes', asignacionForm: 'viajes', itinerario: 'viajes', reservas: 'viajes', emergencias: 'viajes',
+    recordatorios: 'viajes', gastos: 'viajes', gastoForm: 'viajes', lugares: 'lugares', lugarForm: 'lugares', galeria: 'lugares',
     archivos: 'archivos', revision: 'archivos', buscar: '', ajustes: '' };
 
   function ir(p, a, reemplazar) {
@@ -293,57 +297,267 @@
 
   var PANTALLAS = {};
 
+  /* ====================== VIAJEROS Y TITULARES DE DOCUMENTOS ====================== */
+
+  var COMPARTIDO = 'Compartido';
+
+  // Personas del viaje a partir de «Personas que viajan» (cualquier cantidad):
+  // "Ana, Luis", "Luis y Ana", una por línea...
+  function viajerosDe(v) {
+    var vistos = {};
+    return String((v && v.personas) || '').split(/\s*[,;\n]\s*|\s+(?:y|e)\s+|\s*&\s*/i)
+      .map(function (s) { return s.trim(); })
+      .filter(function (s) { var k = norm(s); if (!k || vistos[k]) return false; vistos[k] = 1; return true; });
+  }
+  // "PRUEBA/ANA MARIA MRS [ADT]" -> "Ana Maria Prueba"
+  function nombrePersona(s) {
+    s = String(s || '').replace(/\[.*?\]|\(.*?\)/g, ' ').trim();
+    if (s.indexOf('/') !== -1) { var p = s.split('/'); s = p.slice(1).join(' ') + ' ' + p[0]; }
+    s = s.replace(/\b(MR|MRS|MS|MISS|MSTR|SR|SRA|SRTA|ADT|CHD|INF)\b\.?/gi, ' ').replace(/\s+/g, ' ').trim();
+    return s.toLowerCase().replace(/(^|[\s-])(\S)/g, function (m, a, b) { return a + b.toUpperCase(); });
+  }
+  function tokens(s) { return norm(s).replace(/[^a-z0-9 ]+/g, ' ').split(/\s+/).filter(function (t) { return t.length > 1; }); }
+  // Viajero que corresponde al nombre del documento, solo si es uno y sin duda.
+  function coincidir(nombreDoc, viajeros) {
+    var td = tokens(nombreDoc);
+    if (!td.length) return null;
+    var c = viajeros.filter(function (n) { var tv = tokens(n); return tv.length && tv.every(function (t) { return td.indexOf(t) !== -1; }); });
+    if (c.length === 1) return c[0];
+    if (!c.length) {
+      var c2 = viajeros.filter(function (n) { var tv = tokens(n); return tv.length && td.indexOf(tv[0]) !== -1; });
+      if (c2.length === 1) return c2[0];
+    }
+    return null;
+  }
+  function esPersonal(tipo) { return tipo === 'vuelo' || tipo === 'seguro'; }
+  function esCondiciones(e) { return e.tipo === 'seguro' && datosDe(e).documento === 'condiciones generales'; }
+
+  // Titular de una reserva o documento.
+  // estado: 'confirmado' (lo eligió la titular), 'detectado' (sin duda por el
+  // nombre del documento), 'dudoso' (hay un nombre pero no coincide con
+  // seguridad) o 'sin' (no hay nombre).
+  function titularDe(e, v) {
+    var d = datosDe(e);
+    var enDoc = d.pasajero || d.asegurado || '';
+    if (d.titular) return { nombre: d.titular, estado: 'confirmado', enDoc: enDoc };
+    if (esCondiciones(e)) return { nombre: COMPARTIDO, estado: 'detectado', enDoc: '' };
+    var viajeros = viajerosDe(v);
+    var m = enDoc ? coincidir(enDoc, viajeros) : null;
+    if (m) return { nombre: m, estado: 'detectado', enDoc: enDoc };
+    if (!enDoc && viajeros.length === 1) return { nombre: viajeros[0], estado: 'detectado', enDoc: '' };
+    if (!enDoc && !esPersonal(e.tipo)) return { nombre: COMPARTIDO, estado: 'detectado', enDoc: '' };
+    return { nombre: '', estado: enDoc ? 'dudoso' : 'sin', enDoc: enDoc };
+  }
+
+  function agregarViajero(v, nombre) {
+    var l = viajerosDe(v);
+    if (!nombre || nombre === COMPARTIDO || l.some(function (n) { return norm(n) === norm(nombre); })) return Promise.resolve({ local: true });
+    l.push(nombre);
+    return Datos.guardar('Viajes', Object.assign({}, v, { personas: l.join(', ') }));
+  }
+
+  // Corrección manual de la asociación (nunca se fusiona ni se elimina nada).
+  function guardarTitular(e, nombre, v) {
+    var d = Object.assign({}, datosDe(e));
+    if (nombre) d.titular = nombre; else delete d.titular;
+    var x = Object.assign({}, e, { datos: d });
+    return agregarViajero(v, nombre).then(function () { return Datos.guardar('Elementos', x); })
+      .then(function (r) { avisoGuardado(r, nombre ? 'Documento asociado a ' + (nombre === COMPARTIDO ? 'todos los viajeros' : nombre) + '.' : 'Asociación quitada.'); });
+  }
+
+  // Selector «¿De quién es?»: viajeros, nombre del documento y «Compartido».
+  function selectorTitular(e, v, t, alElegir) {
+    var viajeros = viajerosDe(v);
+    var pdf = t.enDoc ? nombrePersona(t.enDoc) : '';
+    var op = [['', t.nombre ? 'Quitar la asociación' : '¿De quién es?']].concat(viajeros.map(function (n) { return [n, n]; }));
+    if (pdf && !viajeros.some(function (n) { return norm(n) === norm(pdf); }) && !coincidir(t.enDoc, viajeros)) op.push([pdf, pdf + ' (añadir al viaje)']);
+    op.push([COMPARTIDO, 'Compartido (todos)']);
+    var sel = h('select.selTitular', { 'aria-label': '¿De quién es este documento?', onclick: function (ev) { ev.stopPropagation(); } },
+      op.map(function (o) { return h('option', { value: o[0] }, o[1]); }));
+    sel.value = t.estado === 'confirmado' || t.estado === 'detectado' ? t.nombre : '';
+    sel.addEventListener('change', function () { (alElegir || function (n) { guardarTitular(e, n, v); })(sel.value); });
+    return sel;
+  }
+
+  /* ====================== RESERVAS AGRUPADAS (cada una una sola vez) ====================== */
+
+  function numVuelo(e) { var d = datosDe(e); return norm(d.vuelo || e.titulo).replace(/[^a-z0-9]/g, ''); }
+  function claveReserva(e) {
+    if (e.tipo === 'vuelo') return 'vuelo|' + numVuelo(e) + '|' + (e.fecha || '');
+    if (e.tipo === 'seguro') return 'seguro';
+    return e.tipo + '|' + (norm(e.confirmacion).replace(/[^a-z0-9]/g, '') || norm(e.titulo)) + '|' + (e.fecha || '');
+  }
+  function completitud(e) {
+    var d = datosDe(e);
+    return ['fecha', 'hora', 'fecha_fin', 'hora_fin', 'lugar', 'direccion', 'confirmacion', 'telefono'].filter(function (k) { return e[k]; }).length +
+      Object.keys(d).length * 0.1 - (esCondiciones(e) ? 20 : 0);
+  }
+  // Una entrada por vuelo, alojamiento o reserva, aunque llegue en varios
+  // documentos (uno por pasajero). Los seguros forman un solo grupo.
+  function gruposReservas(v) {
+    var mapa = {}, orden = [];
+    elementosDe(v.id).sort(porFechaHora).forEach(function (e) {
+      var k = claveReserva(e);
+      // Un vuelo sin fecha se une al mismo vuelo con fecha.
+      if (e.tipo === 'vuelo' && !e.fecha) {
+        var otro = orden.find(function (g) { return g.tipo === 'vuelo' && g.clave.split('|')[1] === numVuelo(e); });
+        if (otro) k = otro.clave;
+      }
+      if (!mapa[k]) { mapa[k] = { clave: k, tipo: e.tipo, elementos: [] }; orden.push(mapa[k]); }
+      mapa[k].elementos.push(e);
+    });
+    orden.forEach(function (g) {
+      g.principal = g.elementos.slice().sort(function (a, b) { return completitud(b) - completitud(a); })[0];
+    });
+    return orden;
+  }
+  function principales(v) { return gruposReservas(v).map(function (g) { return g.principal; }); }
+
+  // Documentos de una reserva, cada uno con su titular. Una copia real (mismo
+  // contenido) se señala; nunca se oculta, fusiona ni elimina.
+  function filasDocumentos(g, v) {
+    var filas = g.elementos.filter(function (e) { return e.documento_id; }).map(function (e) {
+      return { e: e, doc: D().documentos.find(function (x) { return x.id_archivo === e.documento_id; }) || null, t: titularDe(e, v) };
+    });
+    var vistos = {};
+    filas.forEach(function (f) {
+      var k = f.doc && f.doc.huella;
+      if (!k) return;
+      if (vistos[k] && vistos[k] !== f.e.documento_id) f.copiaDe = vistos[k];
+      else vistos[k] = f.e.documento_id;
+    });
+    var orden = viajerosDe(v);
+    var pos = function (f) { var i = orden.indexOf(f.t.nombre); return f.t.nombre === COMPARTIDO ? 900 : (i === -1 ? (f.t.nombre ? 800 : 1000) : i); };
+    return filas.sort(function (a, b) { return pos(a) - pos(b); });
+  }
+  function etiquetaDocumento(e) {
+    var d = datosDe(e);
+    if (e.tipo === 'vuelo') return d.asiento || d.puerta ? 'Ver pase de abordar' : (d.boleto ? 'Ver boleto' : 'Ver reserva');
+    if (e.tipo === 'seguro') return esCondiciones(e) ? 'Ver condiciones' : 'Ver seguro';
+    if (e.tipo === 'hotel') return 'Ver reserva';
+    return 'Ver documento';
+  }
+
+  // Abre el documento: copia del dispositivo (también sin conexión) o Drive.
+  function abrirDocumento(id) {
+    var doc = D().documentos.find(function (x) { return x.id_archivo === id; });
+    var abrirUrl = function (u) { var a = h('a', { href: u, target: '_blank', rel: 'noopener noreferrer' }); document.body.appendChild(a); a.click(); a.remove(); };
+    Almacen.leerArchivo(id).then(function (a) {
+      if (a) { abrirUrl(URL.createObjectURL(new Blob([a.bytes], { type: a.tipo }))); return; }
+      if (!MV.hayConexion()) { aviso('Este documento no está guardado en el dispositivo; se consulta con internet.', true); return; }
+      abrirUrl(doc ? doc.enlace : 'https://drive.google.com/file/d/' + id + '/view');
+    }, function () { if (doc && MV.hayConexion()) abrirUrl(doc.enlace); });
+  }
+
+  /* ====================== ICONOS DE ACCESOS ====================== */
+
+  var ICONOS_ACCESO = {
+    itinerario: '<rect x="4" y="5.5" width="16" height="14.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+    reservas: '<path d="M4 7.5a1.5 1.5 0 0 1 1.5-1.5h13A1.5 1.5 0 0 1 20 7.5v2a2.5 2.5 0 0 0 0 5v2a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 16.5v-2a2.5 2.5 0 0 0 0-5z" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M14.5 6.5v11" stroke="currentColor" stroke-width="1.5" stroke-dasharray="1.6 1.8"/>',
+    lugares: '<path d="M12 20.5s-6-5.6-6-10a6 6 0 0 1 12 0c0 4.4-6 10-6 10z" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="10.3" r="2" fill="none" stroke="currentColor" stroke-width="1.5"/>',
+    gastos: '<rect x="3.5" y="6.5" width="17" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="12" r="2.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.5 9.5v5M17.5 9.5v5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+    emergencias: '<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M12 8v8M8 12h8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>',
+    recordatorios: '<path d="M6.5 16.5V11a5.5 5.5 0 0 1 11 0v5.5l1.5 1.5H5z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><path d="M10 20.5h4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
+    viaje: '<rect x="5" y="3.5" width="14" height="17" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><circle cx="12" cy="11" r="3.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M9 16.5h6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>'
+  };
+  function iconoAcceso(n) {
+    var s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    s.setAttribute('viewBox', '0 0 24 24'); s.setAttribute('width', '26'); s.setAttribute('height', '26'); s.setAttribute('aria-hidden', 'true');
+    s.innerHTML = ICONOS_ACCESO[n]; // rutas fijas del codigo, sin datos
+    return s;
+  }
+
+  // Accesos grandes de un viaje (sin pestañas ni desplazamiento horizontal).
+  function accesosViaje(v, cuales) {
+    var grupos = gruposReservas(v);
+    var porConfirmar = grupos.reduce(function (n, g) { return n + filasDocumentos(g, v).filter(function (f) { return f.t.estado === 'dudoso' || f.t.estado === 'sin'; }).length; }, 0);
+    var ciudad = ciudadesDe(v, estadoViaje(v) === 'actual' ? hoy() : v.inicio)[0] || '';
+    var enCiudad = ciudad ? D().lugares.filter(function (l) { return norm(l.ciudad) === norm(ciudad); }).length : 0;
+    var nGastos = gastosDe(v).length;
+    var dias = v.inicio && v.fin ? difDias(v.fin, v.inicio) + 1 : 0;
+    var todos = {
+      itinerario: ['Itinerario', dias ? 'Un día a la vez · ' + dias + (dias === 1 ? ' día' : ' días') : 'Un día a la vez', function () { ir('itinerario', { viaje: v.id }); }],
+      reservas: ['Documentos y reservas', porConfirmar ? porConfirmar + ' por confirmar' : (grupos.length ? grupos.length + (grupos.length === 1 ? ' reserva' : ' reservas') : 'Vuelos, hotel y seguros'), function () { ir('reservas', { viaje: v.id }); }],
+      lugares: ['Lugares por conocer', ciudad ? enCiudad + ' en ' + ciudad : 'Mis lugares favoritos', function () { filtrosLugares.ciudad = ciudad; ir('lugares'); }],
+      gastos: ['Gastos de mi viaje', nGastos ? dinero(totalGastos(v)) : 'Sin gastos registrados', function () { ir('gastos', { viaje: v.id }); }],
+      emergencias: ['Emergencias', 'Seguro y teléfonos', function () { ir('emergencias', { viaje: v.id }); }],
+      recordatorios: ['Recordatorios', 'Para Google Calendar', function () { ir('recordatorios', { viaje: v.id }); }],
+      viaje: ['Mi viaje', 'Todo sobre ' + v.titulo, function () { ir('viaje', { id: v.id }); }]
+    };
+    return h('div.accesos', cuales.map(function (k) {
+      var t = todos[k];
+      return h('button.acceso' + (k === 'reservas' && porConfirmar ? '.atencion' : ''), { type: 'button', onclick: t[2] },
+        iconoAcceso(k), h('b', t[0]), h('span', t[1]));
+    }));
+  }
+
   /* ====================== INICIO ====================== */
 
   PANTALLAS.inicio = function (c) {
     var v = viajeActual();
-    if (v) { pantallaDia(c, v, hoy(), true); return; }
+    if (v) { pantallaHoy(c, v); return; }
     c.appendChild(cab('Inicio', { sub: mayuscula(fechaLarga(hoy())), buscar: true,
       extra: boton('ajustes', 'Ajustes', function () { ir('ajustes'); }) }));
     var proximos = D().viajes.filter(function (x) { return estadoViaje(x) === 'proximo'; })
       .sort(function (a, b) { return (a.inicio || '9') < (b.inicio || '9') ? -1 : 1; });
     if (proximos.length) {
-      c.appendChild(h('h2.seccion', 'Su próximo viaje'));
-      c.appendChild(tarjetaViaje(proximos[0]));
+      var p = proximos[0];
+      c.appendChild(h('h2.seccion', 'Mi próximo viaje'));
+      c.appendChild(tarjetaViaje(p));
+      // Lo primero que hay que hacer al empezar el viaje (una sola línea).
+      var primero = p.inicio ? entradasDia(p, p.inicio).fijas[0] : null;
+      if (primero) {
+        c.appendChild(h('div.grupoDia.sinHilo', 'Para empezar, ' + fechaLarga(p.inicio)));
+        var hilo = h('div.hilo'); hilo.appendChild(paso(primero, '', p, true)); c.appendChild(hilo);
+      }
+      c.appendChild(accesosViaje(p, ['itinerario', 'reservas', 'lugares', 'gastos']));
     } else {
       c.appendChild(vacio('No hay viajes programados. Organice uno o guarde los lugares que quiere conocer.'));
     }
     c.appendChild(h('div.fila.margen',
       h('button.primario', { type: 'button', onclick: function () { ir('viajeForm', {}); } }, 'Organizar un viaje'),
       h('button.secundario', { type: 'button', onclick: function () { ir('lugarForm', {}); } }, 'Quiero conocer')));
-    var limite = Date.now() + 14 * 86400000;
-    var vivos = D().elementos.filter(function (e) { var x = viaje(e.viaje_id); return x && x.archivado !== 'sí'; });
-    var av = Recordatorios.avisos(vivos).filter(function (a) { return a.cuando > Date.now() - 3600000 && a.cuando < limite; }).slice(0, 5);
-    if (av.length) {
-      c.appendChild(h('h2.seccion', 'Próximos recordatorios'));
-      c.appendChild(h('div.lista', av.map(function (a) {
-        return h('div.item.tocable', { onclick: function () { ir('elemento', { id: a.elemento.id }); } },
-          h('div.itemTexto', h('div.quien', a.titulo), h('div.proxima', mayuscula(fechaCorta(a.fecha)) + (a.hora ? ', ' + a.hora : '') + '. ' + ((viaje(a.elemento.viaje_id) || {}).titulo || ''))));
-      })));
-    }
-    var porRevisar = D().documentos.filter(function (d) { return d.estado === 'por revisar'; }).length;
-    if (porRevisar) c.appendChild(h('div', { class: 'alerta tocable', role: 'button', onclick: function () { ir('archivos'); } },
-      porRevisar === 1 ? 'Hay 1 documento por revisar en Documentos y reservas.' : 'Hay ' + porRevisar + ' documentos por revisar en Documentos y reservas.'));
+    avisoPorRevisar(c);
   };
 
-  /* ====================== MI DIA DE HOY / UN DIA DEL VIAJE ====================== */
+  function avisoPorRevisar(c) {
+    var n = D().documentos.filter(function (d) { return d.estado === 'por revisar'; }).length;
+    if (n) c.appendChild(h('div', { class: 'alerta tocable', role: 'button', onclick: function () { ir('archivos'); } },
+      n === 1 ? 'Hay 1 documento nuevo por revisar en Documentos.' : 'Hay ' + n + ' documentos nuevos por revisar en Documentos.'));
+  }
+
+  // «Mi día de hoy»: la protagonista durante el viaje.
+  function pantallaHoy(c, v) {
+    var f = hoy();
+    var n = v.inicio ? difDias(f, v.inicio) + 1 : 0, total = v.inicio && v.fin ? difDias(v.fin, v.inicio) + 1 : 0;
+    c.appendChild(cab('Mi día de hoy', { buscar: true, extra: boton('ajustes', 'Ajustes', function () { ir('ajustes'); }),
+      sub: [mayuscula(fechaLarga(f)), ciudadesDe(v, f)[0] || '', n > 0 && total ? 'día ' + n + ' de ' + total : ''].filter(Boolean).join(' · ') }));
+    // Hoy se consulta; se organiza (mover, ordenar) en el Itinerario.
+    bloqueDia(c, v, f, { consulta: true });
+    c.appendChild(h('h2.seccion', v.titulo));
+    c.appendChild(accesosViaje(v, ['itinerario', 'reservas', 'lugares', 'gastos', 'emergencias', 'viaje']));
+    avisoPorRevisar(c);
+  }
+
+  /* ====================== UN DIA DEL VIAJE ====================== */
 
   // Reparte lo del dia en: horario fijo, actividades del dia y «Si nos queda tiempo».
+  // Cada vuelo, alojamiento o reserva aparece una sola vez (ver gruposReservas).
   function entradasDia(v, fecha) {
     var fijas = [], flexibles = [], opcionales = [];
-    elementosDe(v.id).forEach(function (e) {
+    principales(v).forEach(function (e) {
       if (e.tipo === 'seguro') return;
       var d = datosDe(e);
       if (e.tipo === 'hotel') {
         if (e.fecha === fecha) fijas.push({ hora: e.hora, titulo: 'Entrada al alojamiento', sub: e.titulo, e: e, sitio: e.direccion || e.lugar });
-        if (e.fecha_fin === fecha) fijas.push({ hora: e.hora_fin, titulo: 'Salida del alojamiento', sub: e.titulo, e: e, sitio: e.direccion || e.lugar });
+        if (e.fecha_fin === fecha) fijas.push({ hora: e.hora_fin, titulo: 'Salida del alojamiento', sub: e.titulo, e: e });
         return;
       }
       if (e.tipo === 'auto' && e.fecha_fin === fecha && e.fecha !== fecha) fijas.push({ hora: e.hora_fin, titulo: 'Devolver el auto', sub: e.titulo, e: e, sitio: e.direccion });
       if (e.fecha !== fecha) return;
       if (e.tipo === 'vuelo') {
-        fijas.push({ hora: e.hora, titulo: 'Vuelo ' + (d.vuelo || e.titulo), e: e, sitio: d.origen ? 'Aeropuerto ' + d.origen : e.lugar,
-          sub: [d.origen && d.destino ? d.origen + ' a ' + d.destino : '', e.hora_fin ? 'llega ' + e.hora_fin : '', d.terminal ? 'terminal ' + d.terminal : ''].filter(Boolean).join(', ') });
+        fijas.push({ hora: e.hora, titulo: 'Vuelo ' + (d.vuelo || e.titulo), e: e, sitio: d.origen ? 'Aeropuerto ' + d.origen : e.lugar, etiquetaSitio: 'Cómo llegar al aeropuerto',
+          sub: [d.origen && d.destino ? d.origen + ' → ' + d.destino : '', e.hora_fin ? 'llega ' + e.hora_fin : '', d.terminal ? 'terminal ' + d.terminal : ''].filter(Boolean).join(' · ') });
         return;
       }
       fijas.push({ hora: e.hora, titulo: e.titulo, sub: TIPOS[e.tipo], e: e, sitio: e.direccion || e.lugar });
@@ -366,41 +580,79 @@
     return { fijas: fijas, flexibles: flexibles, opcionales: opcionales };
   }
 
-  function paso(x, clase) {
+  // Dias del viaje (de inicio a fin, mas los que tengan reservas o actividades).
+  function diasDe(v) {
+    var fechas = {};
+    principales(v).forEach(function (e) {
+      if (e.tipo === 'seguro') return;
+      if (e.fecha) fechas[e.fecha] = 1;
+      if (e.fecha_fin && (e.tipo === 'hotel' || e.tipo === 'auto')) fechas[e.fecha_fin] = 1;
+    });
+    D().asignaciones.forEach(function (x) { if (x.viaje_id === v.id && x.fecha) fechas[x.fecha] = 1; });
+    if (v.inicio && v.fin && difDias(v.fin, v.inicio) < 62) for (var f = v.inicio; f <= v.fin; f = sumarDias(f, 1)) fechas[f] = 1;
+    else if (v.inicio) fechas[v.inicio] = 1;
+    return Object.keys(fechas).sort();
+  }
+  function opcionesDiasViaje(v) {
+    return diasDe(v).map(function (f) { return [f, mayuscula(fechaLarga(f))]; });
+  }
+
+  // Solo los botones que sirven para cada actividad.
+  function paso(x, clase, v, consulta) {
     var esReserva = !!x.e;
     var abrir = function () { if (x.asig) ir('asignacionForm', { id: x.asig.id }); else ir('elemento', { id: x.e.id }); };
+    var acciones = h('div.acciones');
+    if (x.sitio) acciones.appendChild(enlaceExterno(rutaMaps(x.sitio), x.etiquetaSitio || 'Cómo llegar'));
+    if (x.asig && v && !consulta) acciones.appendChild(botonMover(x.asig, v));
     return h('div.paso' + (esReserva ? '.reserva' : '') + (clase ? '.' + clase : ''),
       h('div.hora' + (x.hora ? '' : '.libre'), x.hora || (esReserva ? '—' : '')),
       h('div.caja', { onclick: abrir },
         x.l && x.l.foto_id ? ponerFoto(h('img.foto', { alt: '' }), x.l.foto_id) : null,
         h('div.itemTexto', h('div.quien', x.titulo), x.sub ? h('div.proxima', x.sub) : null,
-          x.e && x.e.confirmacion ? h('div.chips', chip(x.e.confirmacion, 'codigo')) : null,
-          x.sitio ? h('div.acciones', enlaceExterno(mapa(x.sitio), 'Mapa'), enlaceExterno(rutaMaps(x.sitio), 'Cómo llegar')) : null)));
+          acciones.childNodes.length ? acciones : null)));
+  }
+
+  // Mover una actividad a otro dia sin salir del itinerario.
+  function botonMover(asig, v) {
+    var b = h('button.secundario.chico', { type: 'button', onclick: function (ev) {
+      ev.stopPropagation();
+      var sel = h('select.moverDia', { 'aria-label': 'Mover a otro día', onclick: function (e2) { e2.stopPropagation(); } },
+        h('option', { value: '__' }, 'Mover a…'),
+        opcionesDiasViaje(v).filter(function (o) { return o[0] !== asig.fecha; }).map(function (o) { return h('option', { value: o[0] }, o[1]); }),
+        h('option', { value: '' }, 'Sin día asignado'));
+      sel.addEventListener('change', function () {
+        if (sel.value === '__') return;
+        var destino = sel.value;
+        Datos.guardar('Asignaciones', Object.assign({}, asig, { fecha: destino, orden: '' })).then(function (r) {
+          avisoGuardado(r, destino ? 'Movido al ' + fechaLarga(destino) + '.' : 'Quedó sin día asignado.');
+          pintar();
+        });
+      });
+      b.replaceWith(sel);
+      sel.focus();
+    } }, 'Cambiar de día');
+    return b;
   }
 
   function bloqueDia(c, v, fecha, o) {
     o = o || {};
     var x = entradasDia(v, fecha);
-    var n = v.inicio ? difDias(fecha, v.inicio) + 1 : 0;
-    var total = v.inicio && v.fin ? difDias(v.fin, v.inicio) + 1 : 0;
-    if (!o.sinCabecera) {
-      c.appendChild(h('div.diaCab' + (fecha === hoy() ? '.hoy' : ''),
-        h('h2', { class: 'tocable', onclick: function () { ir('dia', { viaje: v.id, fecha: fecha }); } }, mayuscula(fechaLarga(fecha))),
-        h('span', [n > 0 && total ? 'Día ' + n + ' de ' + total : '', ciudadesDe(v, fecha)[0] || ''].filter(Boolean).join(', '))));
+    if (x.fijas.length) {
+      c.appendChild(h('div.grupoDia', 'Con horario'));
+      var hilo = h('div.hilo');
+      x.fijas.forEach(function (e) { hilo.appendChild(paso(e, '', v, o.consulta)); });
+      c.appendChild(hilo);
     }
-    var hilo = h('div.hilo');
-    x.fijas.forEach(function (e) { hilo.appendChild(paso(e)); });
-    c.appendChild(hilo);
     if (x.flexibles.length) {
       c.appendChild(h('div.grupoDia', 'Actividades del día'));
       var h2 = h('div.hilo');
-      x.flexibles.forEach(function (e) { h2.appendChild(paso(e)); });
+      x.flexibles.forEach(function (e) { h2.appendChild(paso(e, '', v, o.consulta)); });
       c.appendChild(h2);
     }
     if (x.opcionales.length) {
       c.appendChild(h('div.grupoDia', 'Si nos queda tiempo'));
       var h3 = h('div.hilo');
-      x.opcionales.forEach(function (e) { h3.appendChild(paso(e, 'opcional')); });
+      x.opcionales.forEach(function (e) { h3.appendChild(paso(e, 'opcional', v, o.consulta)); });
       c.appendChild(h3);
     }
     if (!x.fijas.length && !x.flexibles.length && !x.opcionales.length) c.appendChild(h('div.libreDia', 'Sin planes para este día.'));
@@ -453,42 +705,77 @@
     despuesDe.after(caja);
   }
 
-  function pantallaDia(c, v, fecha, esHoy) {
-    c.appendChild(cab(esHoy ? 'Mi día de hoy' : mayuscula(fechaLarga(fecha)), { volver: !esHoy, buscar: esHoy,
-      sub: esHoy ? mayuscula(fechaLarga(fecha)) + '. ' + v.titulo : v.titulo,
-      extra: esHoy ? boton('ajustes', 'Ajustes', function () { ir('ajustes'); }) : null }));
-    if (!esHoy) {
-      c.appendChild(h('div.fila.margen',
-        v.inicio && fecha > v.inicio ? h('button.secundario.chico', { type: 'button', onclick: function () { ir('dia', { viaje: v.id, fecha: sumarDias(fecha, -1) }, true); } }, 'Día anterior') : null,
-        v.fin && fecha < v.fin ? h('button.secundario.chico', { type: 'button', onclick: function () { ir('dia', { viaje: v.id, fecha: sumarDias(fecha, 1) }, true); } }, 'Día siguiente') : null));
-    }
-    bloqueDia(c, v, fecha, { completo: true, sinCabecera: true });
-    c.appendChild(h('div.fila.margen',
-      h('button.enlace', { type: 'button', onclick: function () { pestanaViaje[v.id] = 'itinerario'; ir('viaje', { id: v.id }); } }, 'Itinerario completo'),
-      h('button.enlace', { type: 'button', onclick: function () { pestanaViaje[v.id] = 'documentos'; ir('viaje', { id: v.id }); } }, 'Documentos y reservas'),
-      h('button.enlace', { type: 'button', onclick: function () { pestanaViaje[v.id] = 'emergencias'; ir('viaje', { id: v.id }); } }, 'Emergencias')));
-  }
+  /* ====================== ITINERARIO: UN DIA A LA VEZ ====================== */
 
-  PANTALLAS.dia = function (c, a) {
+  PANTALLAS.itinerario = function (c, a) {
     var v = viaje(a.viaje);
     if (!v) { c.appendChild(cab('Itinerario', { volver: true })); c.appendChild(vacio('Este viaje ya no existe.')); return; }
-    pantallaDia(c, v, a.fecha, false);
+    var dias = diasDe(v);
+    var sinDia = D().asignaciones.filter(function (x) { return x.viaje_id === v.id && !x.fecha; });
+    var fecha = a.fecha === 'sin' && sinDia.length ? 'sin' : (dias.indexOf(a.fecha) !== -1 ? a.fecha : (dias.indexOf(hoy()) !== -1 ? hoy() : dias[0]));
+    c.appendChild(cab('Itinerario', { volver: true, sub: v.titulo }));
+    if (!dias.length && !sinDia.length) {
+      c.appendChild(vacio('Añada las fechas del viaje para organizar el itinerario día por día.'));
+      c.appendChild(h('div.margen', h('button.primario.ancho', { type: 'button', onclick: function () { ir('viajeForm', { id: v.id }); } }, 'Añadir las fechas del viaje')));
+      return;
+    }
+    var cambiar = function (f) { ir('itinerario', { viaje: v.id, fecha: f }, true); };
+    if (fecha !== 'sin' && fecha) {
+      var i = dias.indexOf(fecha);
+      var n = v.inicio ? difDias(fecha, v.inicio) + 1 : 0, total = v.inicio && v.fin ? difDias(v.fin, v.inicio) + 1 : 0;
+      c.appendChild(h('div.selectorDia',
+        h('button.redondo', { type: 'button', 'aria-label': 'Día anterior', disabled: i <= 0, onclick: function () { cambiar(dias[i - 1]); } }, icono('volver')),
+        h('div.diaActual' + (fecha === hoy() ? '.hoy' : ''), h('div.diaNombre', mayuscula(fechaLarga(fecha))),
+          h('div.diaInfo', [n > 0 && total ? 'Día ' + n + ' de ' + total : '', ciudadesDe(v, fecha)[0] || '', fecha === hoy() ? 'hoy' : ''].filter(Boolean).join(' · '))),
+        h('button.redondo.siguiente', { type: 'button', 'aria-label': 'Día siguiente', disabled: i >= dias.length - 1, onclick: function () { cambiar(dias[i + 1]); } }, icono('volver'))));
+    } else {
+      c.appendChild(h('div.selectorDia', h('div.diaActual', h('div.diaNombre', 'Sin día asignado'), h('div.diaInfo', 'Actividades que aún no tienen fecha'))));
+    }
+    // Todos los dias a la vista (se acomodan en varias filas, sin desplazamiento lateral).
+    if (dias.length <= 31) {
+      c.appendChild(h('div.dias', { role: 'group', 'aria-label': 'Días del viaje' }, dias.map(function (f) {
+        var p = partes(f);
+        return h('button' + (f === fecha ? '.activo' : '') + (f === hoy() ? '.hoy' : ''), { type: 'button', 'aria-label': mayuscula(fechaLarga(f)), 'aria-pressed': f === fecha ? 'true' : 'false',
+          onclick: function () { cambiar(f); } }, h('small', DIAS[p.dia]), h('b', p.d));
+      }), sinDia.length ? h('button.sinDia' + (fecha === 'sin' ? '.activo' : ''), { type: 'button', onclick: function () { cambiar('sin'); } }, h('small', 'sin'), h('b', 'día')) : null));
+    } else {
+      var sel = campo('', 'irDia', fecha, 'select', { opciones: opcionesDiasViaje(v).concat(sinDia.length ? [['sin', 'Sin día asignado']] : []) });
+      sel.querySelector('select').addEventListener('change', function (ev) { cambiar(ev.target.value); });
+      c.appendChild(h('div.margen.formulario', sel));
+    }
+    if (fecha === 'sin') {
+      var hilo = h('div.hilo');
+      sinDia.forEach(function (x) {
+        var l = lugar(x.lugar_id);
+        if (l) hilo.appendChild(paso({ titulo: l.nombre, sub: mayuscula(l.categoria), asig: x, l: l,
+          sitio: l.lat && l.lng ? l.lat + ',' + l.lng : (l.direccion || [l.nombre, l.ciudad, l.pais].filter(Boolean).join(', ')) }, '', v));
+      });
+      c.appendChild(hilo);
+      return;
+    }
+    bloqueDia(c, v, fecha, { completo: true });
   };
+
+  // Compatibilidad: la ruta anterior «dia» abre el itinerario en esa fecha.
+  PANTALLAS.dia = function (c, a) { PANTALLAS.itinerario(c, { viaje: a.viaje, fecha: a.fecha }); };
 
   /* ====================== MIS VIAJES ====================== */
 
-  function tarjetaViaje(v) {
-    var els = elementosDe(v.id);
-    var cuenta = function (t) { return els.filter(function (e) { return e.tipo === t; }).length; };
+  function tarjetaViaje(v, fija) {
+    var grupos = gruposReservas(v);
+    var cuenta = function (t) { return grupos.filter(function (g) { return g.tipo === t; }).length; };
     var dias = v.inicio && v.fin ? difDias(v.fin, v.inicio) + 1 : 0;
     var faltan = v.inicio && v.inicio > hoy() ? difDias(v.inicio, hoy()) : -1;
     var p = v.inicio ? partes(v.inicio) : null;
     var est = estadoViaje(v);
-    return h('div.pasaporte' + (est === 'actual' ? '.actual' : ''), { onclick: function () { ir('viaje', { id: v.id }); }, role: 'button', tabindex: '0' },
+    var viajeros = viajerosDe(v);
+    return h('div.pasaporte' + (est === 'actual' ? '.actual' : '') + (fija ? '.fija' : ''),
+      fija ? {} : { onclick: function () { ir('viaje', { id: v.id }); }, role: 'button', tabindex: '0' },
       h('div.estampa', p ? [h('b', p.d), h('span', MESES[p.m - 1] + ' ' + String(p.a).slice(2))] : h('span', 'Sin fecha')),
       h('div.itemTexto',
         h('div.quien', v.titulo, v._pendiente ? h('i.pend', ' por enviar') : null),
-        h('div.proxima', [v.destino, rangoFechas(v.inicio, v.fin), dias ? dias + (dias === 1 ? ' día' : ' días') : ''].filter(Boolean).join('. ')),
+        h('div.proxima', [v.destino && v.destino !== v.titulo ? v.destino : '', rangoFechas(v.inicio, v.fin), dias ? dias + (dias === 1 ? ' día' : ' días') : ''].filter(Boolean).join(' · ')),
+        viajeros.length ? h('div.proxima', 'Viajan: ' + viajeros.join(', ')) : null,
         h('div.chips',
           est === 'actual' ? chip('En curso', 'miel') : null,
           faltan > 0 ? chip(faltan === 1 ? 'Mañana' : 'Faltan ' + faltan + ' días', 'miel') : null,
@@ -511,50 +798,34 @@
       grupos[g[0]].forEach(function (v) { c.appendChild(tarjetaViaje(v)); });
     });
     if (grupos.archivado.length) {
-      c.appendChild(h('details.plegable', h('summary', 'Archivados (' + grupos.archivado.length + ')'), grupos.archivado.map(tarjetaViaje)));
+      c.appendChild(h('details.plegable', h('summary', 'Archivados (' + grupos.archivado.length + ')'), grupos.archivado.map(function (v) { return tarjetaViaje(v); })));
     }
   };
 
+  // Ficha del viaje: tarjeta de pasaporte y accesos grandes a cada apartado.
   PANTALLAS.viaje = function (c, a) {
     var v = viaje(a.id);
     if (!v) { c.appendChild(cab('Viaje', { volver: true })); c.appendChild(vacio('Este viaje ya no existe.')); return; }
-    c.appendChild(cab(v.titulo, { volver: true, sub: [v.destino, rangoFechas(v.inicio, v.fin)].filter(Boolean).join('. '),
+    c.appendChild(cab(v.titulo, { volver: true, sub: rangoFechas(v.inicio, v.fin),
       extra: boton('lapiz', 'Editar viaje', function () { ir('viajeForm', { id: v.id }); }) }));
-    if (v.personas) c.appendChild(h('p.ayuda.margen', 'Viajan: ' + v.personas));
+    c.appendChild(tarjetaViaje(v, true));
     if (v.archivado === 'sí') c.appendChild(h('div.alerta', 'Viaje archivado. Su información se conserva completa.'));
-    var tabs = [['itinerario', 'Itinerario'], ['documentos', 'Documentos y reservas'], ['avisos', 'Recordatorios'], ['emergencias', 'Emergencias']];
-    var actual = pestanaViaje[v.id] || 'itinerario';
-    c.appendChild(h('div.pestanas', { role: 'tablist' }, tabs.map(function (t) {
-      return h('button' + (t[0] === actual ? '.activo' : ''), { type: 'button', role: 'tab', 'aria-selected': t[0] === actual ? 'true' : 'false',
-        onclick: function () { pestanaViaje[v.id] = t[0]; pintar(); } }, t[1]);
-    })));
-    var cuerpo = h('div');
-    c.appendChild(cuerpo);
-    ({ itinerario: pItinerario, documentos: pReservas, avisos: pAvisos, emergencias: pEmergencias })[actual](cuerpo, v);
+    c.appendChild(accesosViaje(v, ['itinerario', 'reservas', 'lugares', 'gastos', 'emergencias', 'recordatorios']));
   };
 
-  function pItinerario(c, v) {
-    var fechas = {};
-    elementosDe(v.id).forEach(function (e) {
-      if (e.tipo === 'seguro') return;
-      if (e.fecha) fechas[e.fecha] = 1;
-      if (e.fecha_fin && (e.tipo === 'hotel' || e.tipo === 'auto')) fechas[e.fecha_fin] = 1;
-    });
-    D().asignaciones.forEach(function (x) { if (x.viaje_id === v.id && x.fecha) fechas[x.fecha] = 1; });
-    if (v.inicio && v.fin && difDias(v.fin, v.inicio) < 62) for (var f = v.inicio; f <= v.fin; f = sumarDias(f, 1)) fechas[f] = 1;
-    var lista = Object.keys(fechas).sort();
-    if (!lista.length) c.appendChild(vacio('Añada las fechas del viaje para ver el itinerario día por día.'));
-    lista.forEach(function (fch) { bloqueDia(c, v, fch, {}); });
-    var sinDia = D().asignaciones.filter(function (x) { return x.viaje_id === v.id && !x.fecha; });
-    if (sinDia.length) {
-      c.appendChild(h('div.diaCab', h('h2', 'Sin día asignado')));
-      var hilo = h('div.hilo');
-      sinDia.forEach(function (x) { var l = lugar(x.lugar_id); if (l) hilo.appendChild(paso({ titulo: l.nombre, sub: mayuscula(l.categoria), asig: x, l: l })); });
-      c.appendChild(hilo);
-    }
+  function cabViaje(c, titulo, v) {
+    c.appendChild(cab(titulo, { volver: true, sub: v.titulo }));
+  }
+  function conViaje(fn, titulo) {
+    return function (c, a) {
+      var v = viaje(a.viaje);
+      if (!v) { c.appendChild(cab(titulo, { volver: true })); c.appendChild(vacio('Este viaje ya no existe.')); return; }
+      cabViaje(c, titulo, v);
+      fn(c, v, a);
+    };
   }
 
-  // Tarjeta de embarque (vuelos).
+  // Tarjeta de embarque (detalle de un vuelo).
   function tarjetaEmbarque(e, compacta) {
     var d = datosDe(e);
     return h('div.embarque' + (compacta ? '.compacto' : ''), { onclick: function () { ir('elemento', { id: e.id }); }, role: 'button', tabindex: '0' },
@@ -577,33 +848,110 @@
         h('div.chips', e.confirmacion ? chip(e.confirmacion, 'codigo') : null, e.documento_id ? chip('Con documento', 'miel') : null)));
   }
 
-  function pReservas(c, v) {
-    var sel = h('select', { 'aria-label': 'Añadir una reserva', class: 'secundario ancho', onchange: function (ev) {
+  /* ====================== DOCUMENTOS Y RESERVAS DEL VIAJE ====================== */
+
+  var filtroPersona = {};
+
+  PANTALLAS.reservas = conViaje(function (c, v) {
+    var grupos = gruposReservas(v);
+    var viajeros = viajerosDe(v);
+    var quien = filtroPersona[v.id] || '';
+    if (viajeros.length > 1) {
+      c.appendChild(h('div.personas', { role: 'group', 'aria-label': 'Documentos de' },
+        h('span', 'Documentos de:'),
+        [''].concat(viajeros).map(function (n) {
+          return h('button' + (n === quien ? '.activo' : ''), { type: 'button', 'aria-pressed': n === quien ? 'true' : 'false',
+            onclick: function () { filtroPersona[v.id] = n; pintar(); } }, n || 'Todos');
+        })));
+    } else if (!viajeros.length) {
+      c.appendChild(h('div.alerta.tocable', { role: 'button', onclick: function () { ir('viajeForm', { id: v.id }); } },
+        'Indique quiénes viajan (Editar viaje) para identificar los boletos y seguros de cada persona.'));
+    }
+    if (!grupos.length) c.appendChild(vacio('Sin reservas. Guarde los documentos en la carpeta de Drive para que se lean solos, o añádalas a mano.'));
+    var secciones = [['Vuelos', function (g) { return g.tipo === 'vuelo'; }], ['Hotel', function (g) { return g.tipo === 'hotel'; }],
+      ['Seguros', function (g) { return g.tipo === 'seguro'; }], ['Otros documentos y reservas', function (g) { return ['vuelo', 'hotel', 'seguro'].indexOf(g.tipo) === -1; }]];
+    var mostradas = 0;
+    secciones.forEach(function (s) {
+      var tarjetas = grupos.filter(s[1]).map(function (g) { return tarjetaGrupo(g, v, quien); }).filter(Boolean);
+      if (!tarjetas.length) return;
+      mostradas += tarjetas.length;
+      c.appendChild(h('h2.seccion', s[0], h('span.cuenta', tarjetas.length)));
+      tarjetas.forEach(function (t) { c.appendChild(t); });
+    });
+    if (quien && !mostradas && grupos.length) c.appendChild(vacio('No hay documentos asociados a ' + quien + '.'));
+    var sel = h('select', { 'aria-label': 'Añadir una reserva a mano', class: 'secundario ancho', onchange: function (ev) {
       if (ev.target.value) ir('elementoForm', { viaje: v.id, tipo: ev.target.value });
     } }, h('option', { value: '' }, 'Añadir una reserva a mano…'), Object.keys(TIPOS).map(function (t) { return h('option', { value: t }, TIPOS[t]); }));
-    c.appendChild(h('div.margen', sel));
-    var els = elementosDe(v.id).sort(porFechaHora);
-    if (!els.length) c.appendChild(vacio('Sin reservas. Añádalas aquí o guarde los documentos en Drive para que se lean solos.'));
-    var vuelos = els.filter(function (e) { return e.tipo === 'vuelo'; });
-    if (vuelos.length) { c.appendChild(h('h2.seccion', 'Vuelos')); vuelos.forEach(function (e) { c.appendChild(tarjetaEmbarque(e)); }); }
-    Object.keys(TIPOS).filter(function (t) { return t !== 'vuelo'; }).forEach(function (t) {
-      var de = els.filter(function (e) { return e.tipo === t; });
-      if (!de.length) return;
-      c.appendChild(h('h2.seccion', t === 'hotel' ? 'Alojamientos' : (t === 'seguro' ? 'Seguros de viaje' : TIPOS[t])));
-      c.appendChild(h('div.lista', de.map(filaReserva)));
-    });
-    var docs = D().documentos.filter(function (d) { return d.viaje_id === v.id; });
-    if (docs.length) {
-      c.appendChild(h('h2.seccion', 'Documentos originales'));
-      c.appendChild(h('div.lista', docs.map(function (d) {
-        return h('div.item.tocable', { onclick: function () { ir('revision', { id: d.id_archivo }); } },
-          h('div.itemTexto', h('div.quien', d.nombre), h('div.chips', d.sin_conexion === 'sí' ? chip('Disponible sin conexión', 'miel') : chip('Solo con internet'))));
-      })));
+    c.appendChild(h('div.margen.espacioGrande', sel));
+  }, 'Documentos y reservas');
+
+  // Una reserva compacta; al abrirla, los documentos de cada persona.
+  function tarjetaGrupo(g, v, quien) {
+    var e = g.principal, d = datosDe(e);
+    var filas = filasDocumentos(g, v);
+    if (quien) {
+      filas = filas.filter(function (f) { return f.t.nombre === quien || f.t.nombre === COMPARTIDO; });
+      if (!filas.length) return null;
     }
+    var dudas = filas.filter(function (f) { return f.t.estado === 'dudoso' || f.t.estado === 'sin'; }).length;
+    var personas = {};
+    filas.forEach(function (f) { if (f.t.nombre && f.t.nombre !== COMPARTIDO) personas[f.t.nombre] = 1; });
+    var nPers = Object.keys(personas).length;
+    var resumen;
+    if (g.tipo === 'vuelo') {
+      resumen = h('div.resumen',
+        h('div.linea1', h('b', [d.aerolinea, d.vuelo || e.titulo].filter(Boolean).join(' ')), h('span', e.fecha ? fechaCorta(e.fecha) : '')),
+        h('div.ruta', h('span.cod', d.origen || '—'), icono('avion', '22'), h('span.cod', d.destino || '—'),
+          h('span.horas', [e.hora ? 'sale ' + e.hora : '', e.hora_fin ? 'llega ' + e.hora_fin : ''].filter(Boolean).join(' · '))));
+    } else if (g.tipo === 'seguro') {
+      var aseg = {};
+      g.elementos.forEach(function (x) { var dx = datosDe(x); if (dx.aseguradora) aseg[dx.aseguradora] = 1; });
+      var vig = g.elementos.filter(function (x) { return !esCondiciones(x) && (x.fecha || x.fecha_fin); })[0];
+      resumen = h('div.resumen', h('div.linea1', h('b', 'Seguros de viaje'), h('span', Object.keys(aseg).join(', '))),
+        vig ? h('div.proxima', 'Vigencia: ' + rangoFechas(vig.fecha, vig.fecha_fin)) : null);
+    } else {
+      resumen = h('div.resumen', h('div.linea1', h('b', e.titulo), h('span', TIPOS[e.tipo])),
+        h('div.proxima', g.tipo === 'hotel' ? [e.fecha ? 'Entrada ' + fechaCorta(e.fecha) : '', e.fecha_fin ? 'salida ' + fechaCorta(e.fecha_fin) : ''].filter(Boolean).join(' · ') :
+          [e.fecha ? rangoFechas(e.fecha, e.fecha_fin) : '', e.hora].filter(Boolean).join(' · ')));
+    }
+    var chips = h('div.chips',
+      e.confirmacion && g.tipo !== 'seguro' ? chip(e.confirmacion, 'codigo') : null,
+      filas.length ? chip(nPers > 1 ? nPers + ' personas' : (filas.length === 1 ? '1 documento' : filas.length + ' documentos')) : chip('Sin documento'),
+      dudas ? chip(dudas === 1 ? '1 por confirmar' : dudas + ' por confirmar', 'atencion') : null);
+    var cuerpo = h('div.documentos');
+    filas.forEach(function (f) { cuerpo.appendChild(filaDocumento(f, v)); });
+    if (!filas.length) cuerpo.appendChild(h('p.ayuda.sinMargen', 'Reserva añadida a mano, sin documento.'));
+    cuerpo.appendChild(h('div.fila.espacio', h('button.enlace', { type: 'button', onclick: function () { ir('elemento', { id: e.id }); } },
+      g.tipo === 'vuelo' ? 'Detalles del vuelo' : (g.tipo === 'seguro' ? 'Detalles del seguro' : 'Detalles de la reserva'))));
+    var abierto = g.tipo === 'seguro' || dudas > 0 || !!quien;
+    return h('details.grupoReserva.' + g.tipo, abierto ? { open: true } : {}, h('summary', resumen, chips), cuerpo);
   }
 
-  function pAvisos(c, v) {
-    var av = Recordatorios.avisos(elementosDe(v.id));
+  function filaDocumento(f, v) {
+    var t = f.t, e = f.e;
+    var nombre = t.nombre === COMPARTIDO ? 'Compartido' : (t.nombre || 'Sin asignar');
+    var info = [f.doc ? f.doc.nombre : '', e.tipo === 'seguro' && !esCondiciones(e) ? [datosDe(e).aseguradora, e.confirmacion ? 'póliza ' + e.confirmacion : ''].filter(Boolean).join(', ') : ''].filter(Boolean).join(' · ');
+    var correccion = h('div.correccion');
+    var fila = h('div.docFila' + (t.estado === 'dudoso' || t.estado === 'sin' ? '.porConfirmar' : ''),
+      h('div.persona', h('b', nombre),
+        t.estado === 'detectado' && t.enDoc ? h('small', 'según el documento') : null,
+        t.estado === 'dudoso' ? h('small', 'En el documento: ' + nombrePersona(t.enDoc) + '. ¿De quién es?') : null,
+        t.estado === 'sin' ? h('small', 'El documento no dice de quién es.') : null,
+        info ? h('small.archivo', info) : null,
+        f.copiaDe ? h('small.copia', 'Mismo contenido que otro documento: posible copia. No se borró nada; puede descartarla en Documentos.') : null),
+      h('div.botones',
+        h('button.secundario.chico', { type: 'button', onclick: function () { abrirDocumento(e.documento_id); } }, etiquetaDocumento(e)),
+        t.estado === 'dudoso' || t.estado === 'sin' ? null :
+          h('button.enlace.chico', { type: 'button', onclick: function (ev) { ev.target.replaceWith(selectorTitular(e, v, t)); } }, 'Corregir')),
+      correccion);
+    if (t.estado === 'dudoso' || t.estado === 'sin') correccion.appendChild(selectorTitular(e, v, t));
+    return fila;
+  }
+
+  /* ====================== RECORDATORIOS Y EMERGENCIAS ====================== */
+
+  PANTALLAS.recordatorios = conViaje(function (c, v) {
+    var av = Recordatorios.avisos(principales(v));
     c.appendChild(h('p.ayuda.margen', 'Los recordatorios están preparados, pero no se añaden solos. «Revisar y añadir» abre Google Calendar con el evento listo; solo se guarda si usted lo confirma allí. No se modifica ningún otro evento.'));
     if (!av.length) { c.appendChild(vacio('No hay recordatorios: añada reservas con fecha.')); return; }
     c.appendChild(h('div.lista', av.map(function (a) {
@@ -614,36 +962,145 @@
           a.nota ? h('div.nota', a.nota) : null),
         pasado ? null : h('div.accionesItem', enlaceExterno(Recordatorios.enlaceCalendario(a), 'Revisar y añadir a Google Calendar')));
     })));
-  }
+  }, 'Recordatorios');
 
-  function pEmergencias(c, v) {
+  PANTALLAS.emergencias = conViaje(function (c, v) {
     var els = elementosDe(v.id);
-    var seguros = els.filter(function (e) { return e.tipo === 'seguro'; });
-    var hoteles = els.filter(function (e) { return e.tipo === 'hotel'; });
+    // Un seguro por persona (el más completo); las condiciones generales no se repiten aquí.
+    var porPersona = {}, orden = [];
+    els.filter(function (e) { return e.tipo === 'seguro' && !esCondiciones(e); }).forEach(function (s) {
+      var t = titularDe(s, v), k = t.nombre || ('?' + s.id);
+      if (!porPersona[k]) { porPersona[k] = s; orden.push(k); } else if (completitud(s) > completitud(porPersona[k])) porPersona[k] = s;
+    });
+    var hoteles = gruposReservas(v).filter(function (g) { return g.tipo === 'hotel'; }).map(function (g) { return g.principal; });
     c.appendChild(h('p.ayuda.margen', 'Esta información se consulta también sin internet.'));
-    if (!seguros.length) c.appendChild(h('div.alerta', 'No hay seguro de viaje registrado para este viaje.'));
-    seguros.forEach(function (s) {
-      var d = datosDe(s);
+    if (!orden.length) c.appendChild(h('div.alerta', 'No hay seguro de viaje registrado para este viaje.'));
+    orden.forEach(function (k) {
+      var s = porPersona[k], d = datosDe(s), t = titularDe(s, v);
       c.appendChild(h('div.tarjeta',
+        h('div.etiqueta', t.nombre && t.nombre !== COMPARTIDO ? 'Seguro de ' + t.nombre : 'Seguro de viaje'),
         h('div.nombreTarjeta', d.aseguradora || s.titulo),
         s.confirmacion ? h('div.dato', h('span', 'Póliza'), h('b', s.confirmacion)) : null,
         s.fecha || s.fecha_fin ? h('div.dato', h('span', 'Vigencia'), h('b', rangoFechas(s.fecha, s.fecha_fin))) : null,
-        (d.telefonos && d.telefonos.length ? d.telefonos : (s.telefono ? [{ telefono: s.telefono, contexto: 'Asistencia' }] : [])).map(function (t) {
-          return h('a.llamar', { href: tel(t.telefono) }, h('span', t.contexto || 'Llamar'), h('b', t.telefono));
+        (d.telefonos && d.telefonos.length ? d.telefonos : (s.telefono ? [{ telefono: s.telefono, contexto: 'Asistencia' }] : [])).map(function (x) {
+          return h('a.llamar', { href: tel(x.telefono) }, h('span', x.contexto || 'Llamar'), h('b', x.telefono));
         }),
         d.emergencias ? h('div.textoLibre', d.emergencias) : null,
         d.coberturas && d.coberturas.length ? h('details', h('summary', 'Coberturas'), h('ul', d.coberturas.map(function (x) { return h('li', x); }))) : null,
-        h('button.enlace', { type: 'button', onclick: function () { ir('elemento', { id: s.id }); } }, 'Ver la póliza completa')));
+        h('div.fila.espacio', s.documento_id ? h('button.secundario.chico', { type: 'button', onclick: function () { abrirDocumento(s.documento_id); } }, 'Ver seguro') : null,
+          h('button.enlace', { type: 'button', onclick: function () { ir('elemento', { id: s.id }); } }, 'Detalles'))));
     });
     hoteles.forEach(function (e) {
-      c.appendChild(h('div.tarjeta', h('div.nombreTarjeta', e.titulo),
+      c.appendChild(h('div.tarjeta', h('div.etiqueta', 'Alojamiento'), h('div.nombreTarjeta', e.titulo),
         e.direccion ? h('div.textoLibre', e.direccion) : null,
         e.telefono ? h('a.llamar', { href: tel(e.telefono) }, h('span', 'Teléfono del alojamiento'), h('b', e.telefono)) : null,
         e.confirmacion ? h('div.dato', h('span', 'Confirmación'), h('b', e.confirmacion)) : null,
         e.direccion || e.lugar ? h('div.fila.espacio', enlaceExterno(rutaMaps(e.direccion || e.lugar), 'Cómo llegar')) : null));
     });
-    if (v.personas) c.appendChild(h('div.tarjeta', h('div.etiqueta', 'Viajan'), v.personas));
+    var vj = viajerosDe(v);
+    if (vj.length) c.appendChild(h('div.tarjeta', h('div.etiqueta', 'Viajan'), vj.join(', ')));
+  }, 'Emergencias');
+
+  /* ====================== GASTOS DE MI VIAJE ====================== */
+
+  var FORMATO_DINERO = (function () { try { return new Intl.NumberFormat('es-MX', { style: 'currency', currency: 'MXN' }); } catch (e) { return null; } })();
+  function dinero(n) { return FORMATO_DINERO ? FORMATO_DINERO.format(n) : '$' + Number(n).toFixed(2); }
+  function gastosDe(v) { return (D().gastos || []).filter(function (g) { return g.viaje_id === v.id; }); }
+  function totalGastos(v) { return Math.round(gastosDe(v).reduce(function (s, g) { return s + (Number(g.importe) || 0); }, 0) * 100) / 100; }
+  var CONCEPTOS = ['Boletos de avión', 'Seguro de viaje', 'Hotel', 'Restaurante', 'Transporte', 'Taxi', 'Entradas', 'Compras', 'Otro gasto'];
+
+  PANTALLAS.gastos = conViaje(function (c, v) {
+    var gs = gastosDe(v).sort(function (a, b) { return ((a.fecha || '0') + a.creado) < ((b.fecha || '0') + b.creado) ? -1 : 1; });
+    c.appendChild(h('div.totalGastos', h('span', 'Total del viaje'), h('b', dinero(totalGastos(v))),
+      h('small', gs.length === 1 ? '1 gasto' : gs.length + ' gastos')));
+    var entrada = h('input', { type: 'file', accept: 'image/*', capture: 'environment', class: 'oculto', 'aria-label': 'Fotografía del ticket' });
+    entrada.addEventListener('change', function () { var f = entrada.files && entrada.files[0]; if (f) leerTicketFoto(f, v); entrada.value = ''; });
+    c.appendChild(entrada);
+    c.appendChild(h('div.dosBotones',
+      h('button.primario', { type: 'button', onclick: function () { ir('gastoForm', { viaje: v.id }); } }, 'Escribir un gasto'),
+      h('button.secundario', { type: 'button', onclick: function () { entrada.click(); } }, 'Fotografiar un ticket')));
+    if (!gs.length) { c.appendChild(vacio('Registre aquí lo que gasta en este viaje: boletos, seguro, hotel, restaurantes, transporte… La suma aparece arriba.')); return; }
+    c.appendChild(h('div.lista.espacio', gs.map(function (g) {
+      return h('div.item.tocable.gasto', { onclick: function () { ir('gastoForm', { viaje: v.id, id: g.id }); } },
+        h('div.itemTexto', h('div.quien', g.concepto, g._pendiente ? h('i.pend', ' por enviar') : null),
+          h('div.proxima', [g.fecha ? mayuscula(fechaCorta(g.fecha)) : '', g.ticket_id ? 'con ticket' : ''].filter(Boolean).join(' · '))),
+        h('b.importe', dinero(Number(g.importe) || 0)));
+    })));
+  }, 'Gastos de mi viaje');
+
+  // Foto del ticket -> OCR de Drive -> reglas de Mis Gastos -> confirmación.
+  function leerTicketFoto(f, v) {
+    if (!MV.hayConexion()) { aviso('Para leer un ticket se necesita internet. Puede escribir el gasto a mano.', true); return; }
+    MV.esperando(true);
+    var foto;
+    prepararFoto(f).then(function (x) {
+      foto = x;
+      if (foto.bytes.length > 3 * 1024 * 1024) throw new Error('grande');
+      return MV.api('leerTicket', { tipo: foto.tipo, base64: aBase64(foto.bytes) });
+    }).then(function (r) {
+      MV.esperando(false);
+      if (!r.ok) { MV.manejarError(r, function (t) { aviso(t, true); }); return; }
+      Almacen.guardarFoto(r.datos.ticket_id, foto.bytes, foto.tipo);
+      var p = r.datos.texto ? Interprete.interpretarTicket(r.datos.texto, {}) : null;
+      var dudas = [];
+      if (!p) dudas.push('No se pudo leer el ticket. Escriba el concepto y el importe; la fotografía queda guardada.');
+      else {
+        if (p.faltan.indexOf('importe') !== -1) dudas.push('No se encontró el total: escríbalo.');
+        else if (p.dudas.indexOf('importe') !== -1) dudas.push('Compruebe el total.');
+        if (p.faltan.indexOf('establecimiento') !== -1) dudas.push('No se reconoció el establecimiento: escriba el concepto.');
+        else if (p.dudas.indexOf('establecimiento') !== -1) dudas.push('Compruebe el nombre del establecimiento.');
+      }
+      ir('gastoForm', { viaje: v.id, nuevoTicket: true, aviso: dudas.join(' '), prefill: {
+        concepto: p ? p.establecimiento : '', importe: p && p.importe ? String(p.importe) : '',
+        fecha: p && p.faltan.indexOf('fecha') === -1 ? p.fecha : (estadoViaje(v) === 'actual' ? hoy() : ''),
+        ticket_id: r.datos.ticket_id, origen: 'foto' } });
+    }, function () {
+      MV.esperando(false);
+      aviso('No se pudo usar esa fotografía. Intente de nuevo o escriba el gasto a mano.', true);
+    });
   }
+
+  PANTALLAS.gastoForm = function (c, a) {
+    var v = viaje(a.viaje);
+    var g = a.id ? (D().gastos || []).find(function (x) { return x.id === a.id; }) : null;
+    if (!v || (a.id && !g)) { c.appendChild(cab('Gasto', { volver: true })); c.appendChild(vacio('Este gasto ya no existe.')); return; }
+    g = g || Object.assign({ viaje_id: v.id, origen: 'manual', fecha: estadoViaje(v) === 'actual' ? hoy() : '' }, a.prefill || {});
+    c.appendChild(cab(g.id ? 'Editar gasto' : (g.origen === 'foto' ? 'Confirmar el ticket' : 'Nuevo gasto'), { volver: true, sub: v.titulo }));
+    if (a.aviso) c.appendChild(h('div.alerta', a.aviso));
+    else if (a.nuevoTicket) c.appendChild(h('p.ayuda.margen', 'Datos leídos del ticket. Revíselos antes de guardar.'));
+    if (g.ticket_id) c.appendChild(ponerFoto(h('img.fotoTicket', { alt: 'Fotografía del ticket' }), g.ticket_id, 'ticket'));
+    var error = h('div.error', { role: 'alert' });
+    var lista = h('datalist', { id: 'conceptosGasto' }, CONCEPTOS.map(function (x) { return h('option', { value: x }); }));
+    var form = h('form.tarjeta.formulario', { onsubmit: function (ev) {
+      ev.preventDefault();
+      var x = leerFormulario(form);
+      var n = Interprete.aNumero(String(x.importe || '').replace(/^\$/, ''));
+      if (!x.concepto) { error.textContent = 'Escriba el concepto (por ejemplo: Restaurante, Hotel, Taxi).'; return; }
+      if (!(n > 0)) { error.textContent = 'Escriba el importe, por ejemplo 1250.50'; return; }
+      var registro = { id: g.id, viaje_id: v.id, concepto: x.concepto, importe: String(Math.round(n * 100) / 100), fecha: x.fecha,
+        ticket_id: g.ticket_id || '', origen: g.origen === 'foto' ? 'foto' : 'manual', notas: x.notas };
+      Datos.guardar('Gastos', registro).then(function (r) {
+        avisoGuardado(r, 'Gasto guardado: ' + registro.concepto + ', ' + dinero(n) + '.');
+        if (g.id) history.back(); else ir('gastos', { viaje: v.id }, true);
+      });
+    } },
+      lista,
+      campo('Concepto', 'concepto', g.concepto, 'text', { max: 160, ph: 'Restaurante, hotel, taxi…' }),
+      h('div.dosCol', campo('Importe', 'importe', g.importe, 'text', { im: 'decimal', max: 20, ph: '0.00' }), campo('Fecha', 'fecha', g.fecha, 'date')),
+      campo('Nota (opcional)', 'notas', g.notas, 'textarea', { filas: 2 }),
+      error,
+      h('button.primario.ancho', { type: 'submit' }, 'Guardar'));
+    form.querySelector('[name=concepto]').setAttribute('list', 'conceptosGasto');
+    c.appendChild(form);
+    if (!g.id && a.nuevoTicket) c.appendChild(h('div.margen', h('button.secundario.ancho', { type: 'button', onclick: function () {
+      if (MV.hayConexion()) MV.api('descartarTicket', { id: g.ticket_id });
+      history.back();
+    } }, 'Descartar este ticket')));
+    if (g.id) c.appendChild(h('div.margen', h('button.secundario.peligro.ancho', { type: 'button', onclick: function () {
+      if (!confirm('¿Quitar el gasto «' + g.concepto + '»? La fotografía del ticket, si la hay, sigue en su Drive.')) return;
+      Datos.eliminar('Gastos', g.id).then(function (r) { avisoGuardado(r, 'Gasto quitado.'); history.back(); });
+    } }, 'Quitar este gasto')));
+  };
 
   /* ====================== ORGANIZAR UN VIAJE ====================== */
 
@@ -662,10 +1119,15 @@
         campo('Desde', 'd_desde', d.desde, 'date'), campo('Hasta', 'd_hasta', d.hasta, 'date'));
     }
     destinos.forEach(function (d) { cajaDestinos.appendChild(filaDestino(d)); });
+    var cajaPersonas = h('div.personasForm');
+    var filaPersona = function (n) { return campo('', 'persona', n, 'text', { max: 80, ph: 'Nombre' }); };
+    var actuales = viajerosDe(v);
+    (actuales.length ? actuales : ['']).forEach(function (n) { cajaPersonas.appendChild(filaPersona(n)); });
     var form = h('form.tarjeta.formulario', { onsubmit: function (ev) {
       ev.preventDefault();
       var q = function (n) { return form.querySelector('[name=' + n + ']'); };
-      var x = { titulo: q('titulo').value.trim(), inicio: q('inicio').value, fin: q('fin').value, personas: q('personas').value.trim(),
+      var nombres = Array.prototype.map.call(cajaPersonas.querySelectorAll('[name=persona]'), function (i) { return i.value.trim(); }).filter(Boolean);
+      var x = { titulo: q('titulo').value.trim(), inicio: q('inicio').value, fin: q('fin').value, personas: nombres.join(', '),
         archivado: q('archivado') && q('archivado').checked ? 'sí' : '' };
       x.destinos = Array.prototype.map.call(cajaDestinos.querySelectorAll('.destinoFila'), function (f) {
         return { ciudad: f.querySelector('[name=d_ciudad]').value.trim(), pais: f.querySelector('[name=d_pais]').value.trim(),
@@ -694,7 +1156,11 @@
       cajaDestinos,
       h('button.secundario.chico', { type: 'button', onclick: function () { cajaDestinos.appendChild(filaDestino({})); } }, 'Agregar otro destino'),
       h('div.espacio'),
-      campo('Personas que viajan', 'personas', v.personas, 'text', { max: 300 }),
+      h('div.etiqueta', 'Personas que viajan'),
+      h('p.ayuda.sinMargen', 'Una por campo. Sirve para identificar los boletos y seguros de cada persona.'),
+      cajaPersonas,
+      h('button.secundario.chico', { type: 'button', onclick: function () { var f = filaPersona(''); cajaPersonas.appendChild(f); f.querySelector('input').focus(); } }, 'Agregar otra persona'),
+      h('div.espacio'),
       v.id ? h('label.casilla', h('input', { type: 'checkbox', name: 'archivado', checked: v.archivado === 'sí' }), 'Archivar este viaje (se conserva todo)') : null,
       error,
       h('button.primario.ancho', { type: 'submit' }, 'Guardar'));
@@ -734,6 +1200,18 @@
     c.appendChild(cab(e.titulo, { volver: true, sub: TIPOS[e.tipo] + '. ' + (v.titulo || ''),
       extra: boton('lapiz', 'Editar', function () { ir('elementoForm', { id: e.id }); }) }));
     if (e.tipo === 'vuelo') c.appendChild(tarjetaEmbarque(e));
+    if (e.documento_id) {
+      var t = titularDe(e, v);
+      var caja = h('div.tarjeta.titular',
+        h('div.etiqueta', '¿De quién es este documento?'),
+        h('div.fila', h('b', t.nombre ? (t.nombre === COMPARTIDO ? 'Compartido (todos)' : t.nombre) : 'Sin asignar'),
+          t.estado === 'detectado' && t.enDoc ? chip('según el documento') : null,
+          t.estado === 'dudoso' || t.estado === 'sin' ? chip('por confirmar', 'atencion') : null),
+        t.enDoc ? h('p.ayuda.sinMargen', 'Nombre en el documento: ' + nombrePersona(t.enDoc)) : null,
+        h('div.fila', h('button.secundario.chico', { type: 'button', onclick: function () { abrirDocumento(e.documento_id); } }, etiquetaDocumento(e))));
+      caja.appendChild(h('label.campoTitular', 'Corregir la persona', selectorTitular(e, v, t)));
+      c.appendChild(caja);
+    }
     var nf = NOMBRES_FECHA[e.tipo] || NOMBRES_FECHA.otro;
     var filas = [
       [nf[0], e.fecha ? fechaCorta(e.fecha) : ''], [nf[1] || 'Hora', e.hora], [nf[2], e.fecha_fin ? fechaCorta(e.fecha_fin) : ''], [nf[3] || 'Hora final', e.hora_fin],
@@ -899,7 +1377,7 @@
   /* ====================== DOCUMENTOS Y RESERVAS ====================== */
 
   PANTALLAS.archivos = function (c) {
-    c.appendChild(cab('Documentos y reservas', { buscar: true }));
+    c.appendChild(cab('Mis documentos', { buscar: true, sub: 'Lo que guarda en su carpeta de Drive' }));
     var docs = D().documentos.slice().sort(function (a, b) { return a.registrado < b.registrado ? 1 : -1; });
     c.appendChild(h('div.tarjeta',
       h('p.sinMargen', 'Guarde sus confirmaciones, pases de abordar y pólizas (foto o PDF) en la carpeta «Documentos de viaje» de su Google Drive. Se leen solos cada 10 minutos y aquí revisa los datos antes de incorporarlos.'),
@@ -934,14 +1412,16 @@
     });
     var vigentes = D().viajes.filter(function (v) { var e = estadoViaje(v); return e === 'actual' || e === 'proximo'; })
       .sort(function (a, b) { return (a.inicio || '9') < (b.inicio || '9') ? -1 : 1; });
-    vigentes.forEach(function (v) {
-      var els = elementosDe(v.id).sort(porFechaHora);
-      if (!els.length) return;
-      c.appendChild(h('h2.seccion', 'Reservas de ' + v.titulo));
-      els.filter(function (e) { return e.tipo === 'vuelo'; }).forEach(function (e) { c.appendChild(tarjetaEmbarque(e, true)); });
-      var otras = els.filter(function (e) { return e.tipo !== 'vuelo'; });
-      if (otras.length) c.appendChild(h('div.lista', otras.map(filaReserva)));
-    });
+    // Las reservas ya incorporadas se consultan en su viaje (una sola vez cada una).
+    var conReservas = vigentes.filter(function (v) { return elementosDe(v.id).length; });
+    if (conReservas.length) {
+      c.appendChild(h('h2.seccion', 'Documentos y reservas de mis viajes'));
+      c.appendChild(h('div.lista', conReservas.map(function (v) {
+        var n = gruposReservas(v).length;
+        return h('div.item.tocable', { onclick: function () { ir('reservas', { viaje: v.id }); } },
+          h('div.itemTexto', h('div.quien', v.titulo), h('div.proxima', n + (n === 1 ? ' reserva' : ' reservas') + ' · ' + rangoFechas(v.inicio, v.fin))));
+      })));
+    }
   };
 
   // Revision de un documento: datos propuestos, editables, y confirmacion.
@@ -1004,6 +1484,29 @@
         titulo: destinos.length ? 'Viaje a ' + destinos.map(function (d) { return d.ciudad; }).join(' y ') : '',
         volverA: { p: 'revision', a: { id: doc.id_archivo } } });
     });
+    // Titular del documento: se propone por el nombre que aparece en el PDF.
+    var nombreDoc = '';
+    propuestos.forEach(function (p) { var dp = json(p.datos, {}); nombreDoc = nombreDoc || dp.pasajero || dp.asegurado || ''; });
+    var condiciones = propuestos.some(function (p) { return json(p.datos, {}).documento === 'condiciones generales'; });
+    var cajaTitular = h('div.tarjeta.formulario');
+    c.appendChild(cajaTitular);
+    function pintarTitular() {
+      cajaTitular.innerHTML = '';
+      var vj = viaje(selViaje.querySelector('select').value);
+      var viajeros = vj ? viajerosDe(vj) : [];
+      var sug = condiciones ? COMPARTIDO : (nombreDoc ? coincidir(nombreDoc, viajeros) : (viajeros.length === 1 ? viajeros[0] : ''));
+      if (!sug && !nombreDoc && !esPersonal(tipo)) sug = COMPARTIDO;
+      var pdf = nombreDoc ? nombrePersona(nombreDoc) : '';
+      var op = [['', 'Elija la persona…']].concat(viajeros.map(function (n) { return [n, n]; }));
+      if (pdf && !sug) op.push([pdf, pdf + ' (añadir al viaje)']);
+      op.push([COMPARTIDO, 'Compartido (todos los viajeros)']);
+      var cmp = campo('¿De quién es este documento?', 'titularDoc', sug || '', 'select', { opciones: op, falta: !sug && !nombreDoc });
+      cajaTitular.appendChild(cmp);
+      cajaTitular.appendChild(h('p.ayuda.sinMargen', sug ? (nombreDoc && sug !== COMPARTIDO ? 'Asociado por el nombre del documento (' + pdf + '). Cámbielo si no es correcto.' : 'Puede cambiarlo si no es correcto.') :
+        (pdf ? 'El nombre del documento (' + pdf + ') no coincide con seguridad con las personas del viaje: elija a quién pertenece.' : 'Elija a quién pertenece, o «Compartido» si es de todos. Puede hacerlo después.')));
+    }
+    pintarTitular();
+    selViaje.querySelector('select').addEventListener('change', pintarTitular);
     var formularios = propuestos.map(function (p, i) {
       var f = formularioElemento(p, p.faltantes || [], true);
       if (propuestos.length > 1) {
@@ -1029,8 +1532,10 @@
           elementos.push(x);
         }
         if (!elementos.length) { error.textContent = 'No eligió ningún elemento.'; return; }
+        var titular = cajaTitular.querySelector('[name=titularDoc]').value;
+        if (titular) elementos.forEach(function (x) { x.datos = Object.assign({}, x.datos, { titular: titular }); });
         MV.esperando(true);
-        MV.api('confirmarDocumento', { id: doc.id_archivo, version: doc.version, viajeId: viajeId, elementos: elementos }).then(function (r) {
+        agregarViajero(viaje(viajeId), titular).then(function () { return MV.api('confirmarDocumento', { id: doc.id_archivo, version: doc.version, viajeId: viajeId, elementos: elementos }).then(function (r) {
           MV.esperando(false);
           if (!r.ok) {
             if (r.error === 'conflicto') { aviso('El documento cambió en otro dispositivo; se muestra la versión actual.', true); Datos.sincronizar().then(pintar); return; }
@@ -1038,8 +1543,8 @@
             return;
           }
           aviso('Documento incorporado al viaje.');
-          sincronizarTodo().then(function () { pestanaViaje[viajeId] = 'documentos'; ir('viaje', { id: viajeId }, true); });
-        });
+          sincronizarTodo().then(function () { ir('reservas', { viaje: viajeId }, true); });
+        }); });
       } }, 'Confirmar e incorporar'),
       h('button.secundario.ancho.espacio', { type: 'button', onclick: function () {
         if (!confirm('¿Descartar este documento? El original se conserva en Drive.')) return;
@@ -1062,7 +1567,7 @@
   PANTALLAS.lugares = function (c) {
     c.appendChild(cab('Mis lugares favoritos', { buscar: true }));
     c.appendChild(h('div.fila.margen',
-      h('button.primario', { type: 'button', onclick: function () { ir('lugarForm', {}); } }, 'Quiero conocer'),
+      h('button.primario', { type: 'button', onclick: function () { ir('lugarForm', filtrosLugares.ciudad ? { prefill: { ciudad: filtrosLugares.ciudad } } : {}); } }, 'Quiero conocer'),
       h('button.secundario', { type: 'button', onclick: function () { ir('galeria'); } }, 'Mi galería de viajes')));
     var todos = D().lugares;
     var busq = h('input', { type: 'search', placeholder: 'Buscar por nombre, ciudad o país', 'aria-label': 'Buscar lugares' });
@@ -1070,23 +1575,42 @@
     var selCat = h('select', { 'aria-label': 'Categoría' }, h('option', { value: '' }, 'Todas las categorías'),
       CATEGORIAS.filter(function (x) { return todos.some(function (l) { return l.categoria === x; }); }).map(function (o) { return h('option', { value: o }, mayuscula(o)); }));
     var selEst = h('select', { 'aria-label': 'Estado' }, h('option', { value: '' }, 'Todos los estados'), ESTADOS_LUGAR.map(function (o) { return h('option', { value: o[0] }, o[1]); }));
+    // Ciudad: la que se visita hoy aparece primero y marcada.
+    var va = viajeActual();
+    var deHoy = va ? ciudadesDe(va, hoy()) : [];
+    var nombresCiudad = {};
+    todos.forEach(function (l) { if (l.ciudad) nombresCiudad[norm(l.ciudad)] = nombresCiudad[norm(l.ciudad)] || l.ciudad; });
+    deHoy.forEach(function (x) { nombresCiudad[norm(x)] = nombresCiudad[norm(x)] || x; });
+    var listaCiudades = Object.keys(nombresCiudad).sort(function (a, b) {
+      var ha = deHoy.some(function (x) { return norm(x) === a; }), hb = deHoy.some(function (x) { return norm(x) === b; });
+      return ha !== hb ? (ha ? -1 : 1) : (a < b ? -1 : 1);
+    });
+    var selCiudad = h('select.completo', { 'aria-label': 'Ciudad' }, h('option', { value: '' }, 'Todas las ciudades'),
+      listaCiudades.map(function (k) { var esHoy = deHoy.some(function (x) { return norm(x) === k; });
+        return h('option', { value: nombresCiudad[k] }, nombresCiudad[k] + (esHoy ? ' (la visito hoy)' : '')); }));
+    selCiudad.value = listaCiudades.some(function (k) { return nombresCiudad[k] === filtrosLugares.ciudad; }) ? filtrosLugares.ciudad : '';
     selCat.value = filtrosLugares.categoria; selEst.value = filtrosLugares.estado;
     c.appendChild(h('div.buscador', busq));
-    c.appendChild(h('div.filtros', selCat, selEst));
+    c.appendChild(h('div.filtros', listaCiudades.length > 1 ? selCiudad : null, selCat, selEst));
     var lista = h('div');
     c.appendChild(lista);
     busq.addEventListener('input', function () { filtrosLugares.q = busq.value; dibujar(); });
     selCat.addEventListener('change', function () { filtrosLugares.categoria = selCat.value; dibujar(); });
     selEst.addEventListener('change', function () { filtrosLugares.estado = selEst.value; dibujar(); });
+    selCiudad.addEventListener('change', function () { filtrosLugares.ciudad = selCiudad.value; dibujar(); });
     function dibujar() {
       lista.innerHTML = '';
       var q = norm(filtrosLugares.q);
       var r = todos.filter(function (l) {
-        return (!filtrosLugares.categoria || l.categoria === filtrosLugares.categoria) && (!filtrosLugares.estado || l.estado === filtrosLugares.estado) &&
+        return (!selCiudad.value || norm(l.ciudad) === norm(selCiudad.value)) &&
+          (!filtrosLugares.categoria || l.categoria === filtrosLugares.categoria) && (!filtrosLugares.estado || l.estado === filtrosLugares.estado) &&
           (!q || norm([l.nombre, l.ciudad, l.pais, l.notas, l.direccion].join(' ')).indexOf(q) !== -1);
       });
       if (!todos.length) { lista.appendChild(vacio('Guarde aquí los lugares que quiere conocer. También puede enviarlos desde TikTok, Instagram, WhatsApp o Google Maps con «Compartir».')); return; }
-      if (!r.length) { lista.appendChild(vacio('Ningún lugar coincide con la búsqueda.')); return; }
+      if (!r.length) {
+        lista.appendChild(vacio(selCiudad.value ? 'Aún no hay lugares guardados en ' + selCiudad.value + '. Use «Quiero conocer» para añadir uno.' : 'Ningún lugar coincide con la búsqueda.'));
+        return;
+      }
       var ciudades = {};
       r.forEach(function (l) { var k = l.ciudad || ''; (ciudades[k] = ciudades[k] || []).push(l); });
       Object.keys(ciudades).sort(function (a, b) { return !a ? 1 : !b ? -1 : (norm(a) < norm(b) ? -1 : 1); }).forEach(function (ciudad) {
@@ -1098,6 +1622,15 @@
     }
     dibujar();
   };
+
+  // Viaje al que normalmente se agrega un lugar: el actual o el próximo que
+  // pasa por su ciudad; si no, el actual o el próximo.
+  function viajeParaAgregar(l) {
+    var vivos = D().viajes.filter(function (v) { var e = estadoViaje(v); return e === 'actual' || e === 'proximo'; })
+      .sort(function (a, b) { return (a.inicio || '9') < (b.inicio || '9') ? -1 : 1; });
+    var enCiudad = vivos.find(function (v) { return l.ciudad && ciudadesDe(v).some(function (x) { return norm(x) === norm(l.ciudad); }); });
+    return (enCiudad || vivos[0] || {}).id || '';
+  }
 
   function filaLugar(l) {
     var nViajes = D().asignaciones.filter(function (x) { return x.lugar_id === l.id; }).length;
@@ -1116,6 +1649,7 @@
     l = l || Object.assign({ estado: 'quiero ir', categoria: 'otro' }, a.prefill || {});
     c.appendChild(cab(l.id ? l.nombre : 'Quiero conocer', { volver: true, sub: l.id ? [l.ciudad, l.pais].filter(Boolean).join(', ') : 'Nuevo lugar para Mis lugares favoritos' }));
     if (l.id) c.appendChild(bloqueFoto(l));
+    if (l.id) c.appendChild(h('div.margen', h('button.primario.ancho', { type: 'button', onclick: function () { ir('asignacionForm', { lugar: l.id, viaje: viajeParaAgregar(l) }); } }, 'Agregar a mi itinerario')));
     var error = h('div.error', { role: 'alert' });
     var avisoEnlace = h('p.ayuda');
     var form = h('form.tarjeta.formulario', { onsubmit: function (ev) {
@@ -1157,7 +1691,6 @@
         return h('div.item.tocable', { onclick: function () { ir('asignacionForm', { id: x.id }); } },
           h('div.itemTexto', h('div.quien', v.titulo || '(viaje eliminado)'), h('div.proxima', x.fecha ? mayuscula(fechaLarga(x.fecha)) + (x.hora ? ', ' + x.hora : '') : 'Sin día asignado')));
       })));
-      c.appendChild(h('div.margen', h('button.secundario.ancho', { type: 'button', onclick: function () { ir('asignacionForm', { lugar: l.id }); } }, 'Agregar a mi itinerario')));
       c.appendChild(h('div.margen', h('button.secundario.peligro.ancho', { type: 'button', onclick: function () {
         if (!confirm('¿Quitar «' + l.nombre + '» de Mis lugares favoritos? También se quitará de los itinerarios. Su fotografía sigue en Drive.')) return;
         Datos.eliminar('Lugares', l.id).then(function (r) { avisoGuardado(r, 'Lugar quitado.'); ir('lugares', {}, true); });
@@ -1238,11 +1771,7 @@
       if (otros.length) r.push({ grupo: cerca.length ? 'Otros lugares' : 'Mis lugares favoritos', opciones: otros.map(op) });
       return r;
     }
-    function opcionesDias(vj) {
-      var r = [['', 'Sin día asignado']];
-      for (var f = vj.inicio; f <= vj.fin; f = sumarDias(f, 1)) r.push([f, mayuscula(fechaLarga(f))]);
-      return r;
-    }
+    function opcionesDias(vj) { return [['', 'Sin día asignado']].concat(opcionesDiasViaje(vj)); }
     var plan = x.hora ? 'fijo' : (x.prioridad === 'opcional' ? 'opcional' : 'flexible');
     var conDias = v && v.inicio && v.fin && difDias(v.fin, v.inicio) < 62;
     var form = h('form.tarjeta.formulario', { onsubmit: function (ev) {

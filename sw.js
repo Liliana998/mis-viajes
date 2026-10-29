@@ -3,9 +3,9 @@
 // para poder abrirla sin internet. Los datos sin conexion viven cifrados en
 // el almacenamiento del dispositivo (almacen.js), nunca en esta cache.
 // Las llamadas al servicio de Google nunca se guardan.
-const VERSION_MV = 'mv-v2.1-6';
+const VERSION_MV = 'mv-v2.2-1';
 const INTERFAZ = ['./', 'index.html', 'app.css', 'config.js', 'almacen.js', 'datos.js',
-  'recordatorios.js', 'vistas.js', 'acceso.js', 'mis-viajes.webmanifest', 'icono-192.png', 'favicon-32.png'];
+  'recordatorios.js', 'interprete.js', 'vistas.js', 'acceso.js', 'mis-viajes.webmanifest', 'icono-192.png', 'favicon-32.png'];
 
 self.addEventListener('install', function (e) {
   e.waitUntil(caches.open(VERSION_MV).then(function (c) { return c.addAll(INTERFAZ.map(function (u) { return new Request(u, { cache: 'reload' }); })); })
