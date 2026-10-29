@@ -709,9 +709,9 @@
 
   var CAMPOS_DATOS = {
     vuelo: [['aerolinea', 'Aerolínea'], ['vuelo', 'Número de vuelo'], ['origen', 'Origen (código)'], ['destino', 'Destino (código)'],
-      ['terminal', 'Terminal'], ['asiento', 'Asiento'], ['puerta', 'Puerta'], ['embarque', 'Hora de abordaje'], ['equipaje', 'Equipaje'], ['boleto', 'Número de boleto']],
+      ['terminal', 'Terminal'], ['asiento', 'Asiento'], ['puerta', 'Puerta'], ['embarque', 'Hora de abordaje'], ['equipaje', 'Equipaje'], ['boleto', 'Número de boleto'], ['pasajero', 'Pasajero']],
     hotel: [['total', 'Total'], ['pago', 'Pago'], ['cancelacion', 'Cancelación']],
-    seguro: [['aseguradora', 'Aseguradora']],
+    seguro: [['aseguradora', 'Aseguradora'], ['plan', 'Plan'], ['asegurado', 'Asegurado']],
     traslado: [['proveedor', 'Empresa'], ['personas', 'Personas'], ['total', 'Total']],
     auto: [['proveedor', 'Rentadora'], ['total', 'Total']],
     restaurante: [['personas', 'Personas'], ['total', 'Total']],
