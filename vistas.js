@@ -336,12 +336,21 @@
   // estado: 'confirmado' (lo eligió la titular), 'detectado' (sin duda por el
   // nombre del documento), 'dudoso' (hay un nombre pero no coincide con
   // seguridad) o 'sin' (no hay nombre).
+  // Itinerario o reserva de vuelo sin numero de boleto ni pasajero unico:
+  // es el documento comun de la reserva (lista a todos los pasajeros).
+  function esReservaComun(e) { var d = datosDe(e); return e.tipo === 'vuelo' && !d.boleto && !d.pasajero && !d.asiento && !d.puerta; }
+  function nombreArchivo(e) {
+    var doc = e.documento_id ? D().documentos.find(function (x) { return x.id_archivo === e.documento_id; }) : null;
+    return doc ? String(doc.nombre || '').replace(/\.[a-z0-9]{2,4}$/i, '') : '';
+  }
   function titularDe(e, v) {
     var d = datosDe(e);
     var enDoc = d.pasajero || d.asegurado || '';
     if (d.titular) return { nombre: d.titular, estado: 'confirmado', enDoc: enDoc };
-    if (esCondiciones(e)) return { nombre: COMPARTIDO, estado: 'detectado', enDoc: '' };
+    if (esCondiciones(e) || esReservaComun(e)) return { nombre: COMPARTIDO, estado: 'detectado', enDoc: '' };
     var viajeros = viajerosDe(v);
+    // Sin nombre en el texto: se intenta con el nombre del archivo («... para CARLOS JOSE GUZMAN.pdf»).
+    if (!enDoc && e.documento_id && coincidir(nombreArchivo(e), viajeros)) enDoc = nombreArchivo(e).replace(/^.*\bpara\b\s*/i, '');
     var m = enDoc ? coincidir(enDoc, viajeros) : null;
     if (m) return { nombre: m, estado: 'detectado', enDoc: enDoc };
     if (!enDoc && viajeros.length === 1) return { nombre: viajeros[0], estado: 'detectado', enDoc: '' };
@@ -432,8 +441,8 @@
   }
   function etiquetaDocumento(e) {
     var d = datosDe(e);
-    if (e.tipo === 'vuelo') return d.asiento || d.puerta ? 'Ver pase de abordar' : (d.boleto ? 'Ver boleto' : 'Ver reserva');
-    if (e.tipo === 'seguro') return esCondiciones(e) ? 'Ver condiciones' : 'Ver seguro';
+    if (e.tipo === 'vuelo') return d.asiento || d.puerta ? 'Ver pase de abordar' : (d.boleto ? 'Ver boleto' : 'Ver itinerario');
+    if (e.tipo === 'seguro') return esCondiciones(e) ? 'Ver condiciones' : (e.fecha || e.fecha_fin ? 'Ver seguro' : 'Ver recibo');
     if (e.tipo === 'hotel') return 'Ver reserva';
     return 'Ver documento';
   }
@@ -484,9 +493,9 @@
       recordatorios: ['Recordatorios', 'Para Google Calendar', function () { ir('recordatorios', { viaje: v.id }); }],
       viaje: ['Mi viaje', 'Todo sobre ' + v.titulo, function () { ir('viaje', { id: v.id }); }]
     };
-    return h('div.accesos', cuales.map(function (k) {
+    return h('div.accesosViaje', cuales.map(function (k) {
       var t = todos[k];
-      return h('button.acceso' + (k === 'reservas' && porConfirmar ? '.atencion' : ''), { type: 'button', onclick: t[2] },
+      return h('button.accesoViaje' + (k === 'reservas' && porConfirmar ? '.atencion' : ''), { type: 'button', onclick: t[2] },
         iconoAcceso(k), h('b', t[0]), h('span', t[1]));
     }));
   }
@@ -929,7 +938,7 @@
 
   function filaDocumento(f, v) {
     var t = f.t, e = f.e;
-    var nombre = t.nombre === COMPARTIDO ? 'Compartido' : (t.nombre || 'Sin asignar');
+    var nombre = t.nombre === COMPARTIDO ? (esReservaComun(e) ? 'Reserva de todos' : (esCondiciones(e) ? 'Condiciones para todos' : 'Compartido')) : (t.nombre || 'Sin asignar');
     var info = [f.doc ? f.doc.nombre : '', e.tipo === 'seguro' && !esCondiciones(e) ? [datosDe(e).aseguradora, e.confirmacion ? 'póliza ' + e.confirmacion : ''].filter(Boolean).join(', ') : ''].filter(Boolean).join(' · ');
     var correccion = h('div.correccion');
     var fila = h('div.docFila' + (t.estado === 'dudoso' || t.estado === 'sin' ? '.porConfirmar' : ''),
@@ -1444,8 +1453,8 @@
     var tipo = doc.tipo_detectado || ext.tipo || 'otro';
     var confianza = { alta: 'alta', media: 'media', baja: 'baja', manual: 'elegido por usted' }[ext.confianza] || '';
     c.appendChild(h('div.tarjeta.formulario',
-      campo('Tipo de documento' + (confianza ? ' (detección ' + confianza + ')' : ''), 'tipoDoc', tipo, 'select', { opciones: Object.keys(TIPOS).map(function (t) { return [t, TIPOS[t]]; }) }),
-      h('p.ayuda.sinMargen', 'Si el tipo no es correcto, cámbielo: el documento se vuelve a leer con ese criterio.')));
+      campo('¿Qué es este documento?' + (confianza ? ' (detección ' + confianza + ')' : ''), 'tipoDoc', tipo, 'select', { opciones: Object.keys(TIPOS).map(function (t) { return [t, TIPOS[t]]; }) }),
+      h('p.ayuda.sinMargen', 'Decide el apartado donde se guarda: Vuelos, Hotel, Seguros u Otros. Si no es correcto, cámbielo y el documento se vuelve a leer con ese criterio.')));
     var sel = c.querySelector('[name=tipoDoc]');
     sel.addEventListener('change', function () {
       MV.esperando(true);
@@ -1463,8 +1472,11 @@
     });
     var f0 = propuestos[0].fecha;
     var vivos = D().viajes.filter(function (v) { return v.archivado !== 'sí'; });
+    var codigos = propuestos.map(function (p) { return norm(p.confirmacion).replace(/[^a-z0-9]/g, ''); }).filter(Boolean);
+    var porCodigo = codigos.length ? vivos.find(function (v) { return elementosDe(v.id).some(function (e) { return codigos.indexOf(norm(e.confirmacion).replace(/[^a-z0-9]/g, '')) !== -1; }); }) : null;
+    var futuros = vivos.filter(function (v) { var e = estadoViaje(v); return e === 'actual' || e === 'proximo'; });
     var sugerido = a.viajeNuevo || (f0 && (vivos.find(function (v) { return v.inicio && v.fin && v.inicio <= f0 && f0 <= v.fin; }) ||
-      vivos.find(function (v) { return v.inicio && Math.abs(difDias(v.inicio, f0)) < 3; })) || {}).id || '';
+      vivos.find(function (v) { return v.inicio && Math.abs(difDias(v.inicio, f0)) < 3; })) || porCodigo || (futuros.length === 1 ? futuros[0] : null) || {}).id || '';
     var selViaje = campo('Incorporar al viaje', 'viajeDestino', sugerido, 'select', { opciones: [['', 'Elija un viaje…']].concat(
       D().viajes.map(function (v) { return [v.id, v.titulo + (v.inicio ? ' (' + rangoFechas(v.inicio, v.fin) + ')' : '')]; }), [['__nuevo', 'Organizar un viaje nuevo con esta reserva']]) });
     c.appendChild(h('div.tarjeta.formulario', selViaje));
@@ -1487,6 +1499,8 @@
     // Titular del documento: se propone por el nombre que aparece en el PDF.
     var nombreDoc = '';
     propuestos.forEach(function (p) { var dp = json(p.datos, {}); nombreDoc = nombreDoc || dp.pasajero || dp.asegurado || ''; });
+    var nombreDeArchivo = String(doc.nombre || '').replace(/\.[a-z0-9]{2,4}$/i, '').replace(/^.*\bpara\b\s*/i, '');
+    var comun = tipo === 'vuelo' && propuestos.every(function (p) { var dp = json(p.datos, {}); return !dp.boleto && !dp.pasajero && !dp.asiento && !dp.puerta; });
     var condiciones = propuestos.some(function (p) { return json(p.datos, {}).documento === 'condiciones generales'; });
     var cajaTitular = h('div.tarjeta.formulario');
     c.appendChild(cajaTitular);
@@ -1494,7 +1508,7 @@
       cajaTitular.innerHTML = '';
       var vj = viaje(selViaje.querySelector('select').value);
       var viajeros = vj ? viajerosDe(vj) : [];
-      var sug = condiciones ? COMPARTIDO : (nombreDoc ? coincidir(nombreDoc, viajeros) : (viajeros.length === 1 ? viajeros[0] : ''));
+      var sug = condiciones || comun ? COMPARTIDO : (nombreDoc ? coincidir(nombreDoc, viajeros) : (coincidir(nombreDeArchivo, viajeros) || (viajeros.length === 1 ? viajeros[0] : '')));
       if (!sug && !nombreDoc && !esPersonal(tipo)) sug = COMPARTIDO;
       var pdf = nombreDoc ? nombrePersona(nombreDoc) : '';
       var op = [['', 'Elija la persona…']].concat(viajeros.map(function (n) { return [n, n]; }));
@@ -1507,16 +1521,21 @@
     }
     pintarTitular();
     selViaje.querySelector('select').addEventListener('change', pintarTitular);
+    // Los datos leidos quedan plegados: lo habitual es elegir el viaje y confirmar.
+    var hayFaltas = !condiciones && propuestos.some(function (p) { return (p.faltantes || []).length; });
+    var plegado = h('details.plegable.datosLeidos', hayFaltas ? { open: true } : {},
+      h('summary', propuestos.length > 1 ? 'Ver o corregir los ' + propuestos.length + ' datos leídos' : 'Ver o corregir los datos leídos'));
     var formularios = propuestos.map(function (p, i) {
       var f = formularioElemento(p, p.faltantes || [], true);
       if (propuestos.length > 1) {
         f.insertBefore(h('label.casilla', h('input', { type: 'checkbox', name: 'incluir', checked: true }), 'Incorporar este elemento (' + (i + 1) + ' de ' + propuestos.length + ')'), f.firstChild);
       }
-      c.appendChild(f);
+      plegado.appendChild(f);
       return { form: f, base: p };
     });
     var error = h('div.error.margen', { role: 'alert' });
     c.appendChild(error);
+    var trasBotones = plegado;
     c.appendChild(h('div.margen',
       h('button.primario.ancho', { type: 'button', onclick: function () {
         var viajeId = selViaje.querySelector('select').value;
@@ -1560,6 +1579,7 @@
           b.replaceWith(h('details', { open: true }, h('summary', 'Texto reconocido'), h('pre.textoOcr', r.datos.texto || '(sin texto)')));
         });
       } }, 'Ver el texto reconocido')));
+    c.appendChild(trasBotones);
   };
 
   /* ====================== MIS LUGARES FAVORITOS ====================== */

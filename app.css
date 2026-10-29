@@ -127,18 +127,19 @@ h3.subseccion { margin: 16px 20px 6px; font: 600 14.5px var(--texto); color: var
 details.plegable { margin: 16px; }
 details.plegable > summary { cursor: pointer; font-weight: 600; color: var(--vino); padding: 8px 4px; }
 details.plegable .lista { margin: 6px 0 0; }
+details.datosLeidos .tarjeta { margin: 8px 0; }
 
 /* ---------- Accesos grandes (sin pestañas ni desplazamiento lateral) ---------- */
-.accesos { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 10px 16px 6px; }
-@media (min-width: 600px) { .accesos { grid-template-columns: repeat(3, 1fr); } }
-.acceso { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-height: 96px; padding: 14px 14px 12px;
+.accesosViaje { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 10px 16px 6px; }
+@media (min-width: 600px) { .accesosViaje { grid-template-columns: repeat(3, 1fr); } }
+.accesoViaje { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-height: 96px; padding: 14px 14px 12px;
           border-radius: 16px; border: 1px solid var(--linea); background: var(--papel); text-align: left; color: var(--vino); }
-.acceso:active { background: var(--rosa-bg); }
-.acceso svg { color: var(--terracota); margin-bottom: 2px; }
-.acceso b { font: 400 17px/1.2 var(--titulo); color: var(--vino); }
-.acceso span { font-size: 13px; color: var(--gris); line-height: 1.3; }
-.acceso.atencion { border-color: var(--miel); box-shadow: 0 0 0 1px var(--miel) inset; }
-.acceso.atencion span { color: var(--ok); font-weight: 600; }
+.accesoViaje:active { background: var(--rosa-bg); }
+.accesoViaje svg { color: var(--terracota); margin-bottom: 2px; }
+.accesoViaje b { font: 400 17px/1.2 var(--titulo); color: var(--vino); }
+.accesoViaje span { font-size: 13px; color: var(--gris); line-height: 1.3; }
+.accesoViaje.atencion { border-color: var(--miel); box-shadow: 0 0 0 1px var(--miel) inset; }
+.accesoViaje.atencion span { color: var(--ok); font-weight: 600; }
 
 /* ---------- Pasaporte: tarjeta de viaje ---------- */
 .pasaporte { position: relative; display: flex; gap: 14px; align-items: center; margin: 8px 16px; padding: 16px 16px 16px 18px;
